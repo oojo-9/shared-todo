@@ -103,14 +103,20 @@ export const prefGet = (k) => ls.get('shtodo.pref.' + k);
 export const prefSet = (k, v) => (v == null ? ls.del('shtodo.pref.' + k) : ls.set('shtodo.pref.' + k, v));
 
 let toastTimer;
-export function toast(msg) {
+// action: { label, onClick } 을 주면 토스트 안에 버튼(예: 되돌리기)이 붙는다
+export function toast(msg, action) {
   let el = document.querySelector('.toast');
   if (!el) {
     el = h('div', { class: 'toast', role: 'status', 'aria-live': 'polite' });
     document.body.append(el);
   }
-  el.textContent = msg;
+  const hide = () => el.classList.remove('show');
+  el.replaceChildren(h('span', null, msg), action ? h('button', {
+    class: 'toast-action', type: 'button',
+    onclick: () => { hide(); action.onClick(); },
+  }, action.label) : null);
+  el.classList.toggle('has-action', !!action);
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+  toastTimer = setTimeout(hide, action ? 4500 : 2400);
 }

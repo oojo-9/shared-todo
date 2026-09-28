@@ -411,3 +411,14 @@ input, select, textarea { -webkit-user-select: text; user-select: text; }
 @media (pointer: coarse) {
   input:not([type=checkbox]), select { font-size: 16px !important; }
 }
+
+/* ---------- 내 목록 휴지통 · 되돌리기 토스트 ---------- */
+.del-btn {
+  flex: none; align-self: center; width: 34px; height: 34px; margin: -4px -6px -4px 0;
+  display: grid; place-items: center; border: 0; border-radius: 9px; background: none; color: var(--muted);
+}
+.del-btn .ico { width: 18px; height: 18px; }
+.del-btn:hover, .del-btn:active { color: var(--danger); background: var(--surface-2); }
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast.has-action { pointer-events: auto; }
+.toast-action { border: 0; background: none; padding: 2px 0; color: var(--me-soft); font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }

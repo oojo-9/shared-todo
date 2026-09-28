@@ -19,7 +19,7 @@ const state = {
   cats: new Map(), // userId -> categories
   todos: new Map(), // userId -> 이번 주 todos
   sheet: null,
-  drafts: {}, // 입력 중인 값 (실시간 갱신으로 화면을 다시 그려도 유지)
+  drafts: { email: prefGet('email') || '' }, // 입력 중인 값 (실시간 갱신으로 화면을 다시 그려도 유지)
   authMode: 'signin',
 };
 
@@ -54,7 +54,7 @@ async function boot() {
     return;
   }
   store.subscribe(scheduleReload);
-  store.onAuthChange(() => { state.sheet = null; state.drafts = {}; reload(); });
+  store.onAuthChange(() => { state.sheet = null; state.drafts = { email: prefGet('email') || '' }; reload(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.sheet) closeSheet(); });
   // 아이폰 사파리는 user-scalable=no를 무시하므로 두 손가락 확대를 직접 막는다
   document.addEventListener('gesturestart', (e) => e.preventDefault());
@@ -219,6 +219,7 @@ function authView() {
       onsubmit: (e) => {
         e.preventDefault();
         const { email = '', pw = '' } = state.drafts;
+        prefSet('email', email.trim() || null); // 다음에 로그인 화면에 미리 채움
         act(async () => {
           if (!signUp) return store.signIn(email, pw);
           const r = await store.signUp(email, pw);
@@ -346,7 +347,7 @@ function requestBanner() {
 }
 
 // ---------- 할 일 한 줄 ----------
-function todoRow(t, { editable, cats }) {
+function todoRow(t, { editable, cats, deletable = false }) {
   const c = t.category_id ? cats.get(t.category_id) : null;
   return h('li', { class: `todo s-${t.status}`, style: { '--cat': c?.color || 'var(--line-strong)' } },
     h('button', {
@@ -365,7 +366,27 @@ function todoRow(t, { editable, cats }) {
     h('div', { class: 'todo-title' }, t.title),
     (c || t.status === 'doing') ? h('div', { class: 'todo-meta' },
       c ? h('span', { class: 'cat-tag' }, h('i', { class: 'cat-dot' }), c.name) : null,
-      t.status === 'doing' ? h('span', { class: 'doing-tag' }, '진행중') : null) : null));
+      t.status === 'doing' ? h('span', { class: 'doing-tag' }, '진행중') : null) : null),
+    deletable ? h('button', {
+      class: 'del-btn', type: 'button', 'aria-label': `${t.title} 삭제`, title: '삭제',
+      onclick: () => deleteTodo(t),
+    }, icon('trash')) : null);
+}
+
+// 바로 삭제하고, 몇 초 동안 되돌리기를 보여 준다
+function deleteTodo(t) {
+  const list = state.todos.get(state.me.id) || [];
+  state.todos.set(state.me.id, list.filter((x) => x.id !== t.id));
+  render();
+  act(async () => {
+    await store.deleteTodo(t.id);
+    toast('삭제했어요', {
+      label: '되돌리기',
+      onClick: () => act(() => store.createTodo({
+        date: t.date, title: t.title, category_id: t.category_id, status: t.status, sort: t.sort,
+      })),
+    });
+  });
 }
 
 function cycleStatus(t) {
@@ -497,7 +518,7 @@ function mineView() {
       h('div', { class: 'group-head', style: { '--cat': c?.color || 'var(--line-strong)' } },
         h('i', { class: 'cat-dot' }), c ? c.name : '카테고리 없음',
         c && !c.is_public ? h('span', { class: 'private-tag' }, '비공개') : null),
-      h('ul', { class: 'todo-list' }, items.map((t) => todoRow(t, { editable: true, cats: catMap })))))
+      h('ul', { class: 'todo-list' }, items.map((t) => todoRow(t, { editable: true, cats: catMap, deletable: true })))))
       : h('p', { class: 'empty-text big' }, '이 날의 할 일이 없어요'),
     h('p', { class: 'hint center' }, '체크박스를 누를 때마다 할 일 전 → 진행중 → 완료 순으로 바뀌어요.'));
 }

@@ -24,7 +24,10 @@ function ok({ data, error }) {
 
 export async function createSupabaseStore(cfg) {
   const { createClient } = await import(SDK_URL);
-  const sb = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+  // 로그인 정보를 기기에 저장해 두고 자동 연장한다 → 같은 기기에선 로그아웃 전까지 자동 로그인
+  const sb = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  });
   const listeners = new Set();
   const authListeners = new Set();
   let session = ok(await sb.auth.getSession()).session;
@@ -127,10 +130,10 @@ export async function createSupabaseStore(cfg) {
       return ok(await sb.from('todos').select('*').eq('user_id', userId)
         .gte('date', from).lte('date', to).order('sort').order('created_at'));
     },
-    async createTodo({ date, title, category_id }) {
+    async createTodo({ date, title, category_id, status = 'todo', sort = Date.now() }) {
       ok(await sb.from('todos').insert({
         user_id: uidOrThrow(), date, title: validText(title, '할 일', 200),
-        category_id: category_id || null, status: 'todo', sort: Date.now(),
+        category_id: category_id || null, status, sort,
       }));
     },
     async updateTodo(id, patch) {

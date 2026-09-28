@@ -183,12 +183,12 @@ export function createLocalStore() {
         .sort((a, b) => a.sort - b.sort)
         .map((t) => ({ ...t }));
     },
-    async createTodo({ date, title, category_id }) {
+    async createTodo({ date, title, category_id, status = 'todo', sort = Date.now() }) {
       const me = need();
       const cat = category_id && db.categories.some((c) => c.id === category_id && c.user_id === me.id) ? category_id : null;
       db.todos.push({
         id: uid(), user_id: me.id, category_id: cat, date, title: validText(title, '할 일', 200),
-        status: 'todo', sort: Date.now(), created_at: now(), updated_at: now(),
+        status: STATUS.includes(status) ? status : 'todo', sort, created_at: now(), updated_at: now(),
       });
       commit();
     },
