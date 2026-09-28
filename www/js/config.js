@@ -4,6 +4,8 @@
 export const config = {
   supabaseUrl: 'https://wzdlityqbmrebumfooyv.supabase.co',
   supabaseAnonKey: 'sb_publishable__bQ6JAw5Q7AG7ywx6UzyAA_LFe7yXvl',
+  // 푸시 알림 공개 키 (VAPID). 비밀 키는 Supabase Edge Function Secrets에만 둔다.
+  vapidPublicKey: 'BEo2vknm8eW7WnPxx6a8T9N0p1LTA8fp20NddAf9jihU8fXUo9gD3NsQci7GF_RqEVjLO-GkqOuIV9R8xUKUj7c',
   // Supabase > Authentication > Providers 에서 켠 소셜 로그인만 적는다. 예: ['google', 'apple']
   oauthProviders: [],
   // 설정 > 문의하기 에서 열릴 메일 주소

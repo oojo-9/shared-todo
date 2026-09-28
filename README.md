@@ -63,6 +63,16 @@ python -m http.server 5173 --directory www
 권한은 DB가 막습니다 — `can_view()`와 RLS 정책으로 "연결이 수락된 상대만, 공개 카테고리만" 조회되고, 수정은 본인 것만 됩니다.
 연결 요청·수락·해제는 `request_share`, `respond_share`, `revoke_share` 함수로만 바꿀 수 있습니다.
 
+### 푸시 알림 (친구가 할 일을 완료했을 때)
+
+1. SQL Editor에서 `supabase/002_push.sql` 실행
+2. SQL Editor에서 한 번만: `select vault.create_secret('<PUSH_HOOK_SECRET>', 'push_hook_secret');`
+3. Edge Functions → Deploy a new function → Via Editor → `supabase/functions/notify-done/index.ts` 붙여 넣기, 이름 `notify-done`, 배포 후 **Enforce JWT Verification 끄기**
+4. Edge Functions → Secrets에 `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `PUSH_HOOK_SECRET` 등록
+5. `www/js/config.js`의 `vapidPublicKey`에 공개 키 입력
+
+키와 비밀값은 `.secrets/push-keys.json`(git에 올라가지 않음)에 있습니다. 아이폰은 홈 화면에 추가한 앱에서만 알림을 받을 수 있습니다.
+
 ## 3. 배포 (GitHub Pages)
 
 `www/` 폴더를 그대로 올리면 됩니다. PWA 설치(홈 화면 추가)와 서비스 워커는 HTTPS에서만 동작합니다.

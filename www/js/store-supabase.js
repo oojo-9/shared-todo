@@ -159,7 +159,8 @@ export async function createSupabaseStore(cfg) {
       const byId = new Map(users.map((u) => [u.id, u]));
       const pick = (pred, key) => shares.filter(pred).map((s) => ({ shareId: s.id, user: byId.get(s[key]) })).filter((x) => x.user);
       return {
-        partners: pick((s) => s.viewer_id === myId && s.status === 'accepted', 'owner_id').map((x) => x.user),
+        partners: shares.filter((s) => s.viewer_id === myId && s.status === 'accepted' && byId.has(s.owner_id))
+          .map((s) => ({ ...byId.get(s.owner_id), notify: s.notify !== false })),
         incoming: pick((s) => s.owner_id === myId && s.status === 'requested', 'viewer_id'),
         outgoing: pick((s) => s.viewer_id === myId && s.status === 'requested', 'owner_id'),
       };
@@ -174,6 +175,18 @@ export async function createSupabaseStore(cfg) {
     },
     async revokeShare(partnerId) {
       ok(await sb.rpc('revoke_share', { partner: partnerId }));
+    },
+
+    // ---- 푸시 알림 ----
+    pushSupported: true,
+    async setShareNotify(partnerId, enabled) {
+      ok(await sb.rpc('set_share_notify', { partner: partnerId, enabled }));
+    },
+    async savePushSubscription({ endpoint, p256dh, auth }) {
+      ok(await sb.rpc('save_push_subscription', { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth }));
+    },
+    async deletePushSubscription(endpoint) {
+      ok(await sb.rpc('delete_push_subscription', { p_endpoint: endpoint }));
     },
   };
 }

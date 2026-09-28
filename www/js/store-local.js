@@ -219,7 +219,8 @@ export function createLocalStore() {
       const me = need();
       const pick = (pred, key) => db.shares.filter(pred).map((s) => ({ shareId: s.id, user: userRef(s[key]) })).filter((x) => x.user);
       return {
-        partners: pick((s) => s.viewer_id === me.id && s.status === 'accepted', 'owner_id').map((x) => x.user),
+        partners: db.shares.filter((s) => s.viewer_id === me.id && s.status === 'accepted' && userRef(s.owner_id))
+          .map((s) => ({ ...userRef(s.owner_id), notify: s.notify !== false })),
         incoming: pick((s) => s.owner_id === me.id && s.status === 'requested', 'viewer_id'),
         outgoing: pick((s) => s.viewer_id === me.id && s.status === 'requested', 'owner_id'),
       };
@@ -257,6 +258,13 @@ export function createLocalStore() {
       if (accept) acceptPair(s.owner_id, s.viewer_id);
       else { s.status = 'revoked'; s.updated_at = now(); }
       commit();
+    },
+    // 데모 모드에선 푸시를 보낼 서버가 없어서 친구별 설정만 저장한다
+    pushSupported: false,
+    async setShareNotify(partnerId, enabled) {
+      const me = need();
+      const s = db.shares.find((x) => x.owner_id === partnerId && x.viewer_id === me.id);
+      if (s) { s.notify = !!enabled; commit(); }
     },
     // 연결 해제(또는 보낸 요청 취소): 언제든 한쪽에서 가능
     async revokeShare(partnerId) {

@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import {
   h, icon, ymd, parseYmd, addDays, startOfWeek, today, WEEK, weekdayOf,
-  STATUS, STATUS_LABEL, nextStatus, COLORS, toast, prefGet, prefSet,
+  STATUS, STATUS_LABEL, nextStatus, COLORS, toast, prefGet, prefSet, b64urlToBytes,
 } from './util.js';
 import { createLocalStore } from './store-local.js';
 import { holidayOf } from './holidays.js';
@@ -21,6 +21,7 @@ const state = {
   sheet: null,
   drafts: { email: prefGet('email') || '' }, // 입력 중인 값 (실시간 갱신으로 화면을 다시 그려도 유지)
   authMode: 'signin',
+  pushOn: false, // 이 기기에서 푸시 알림을 받는 중인지
 };
 
 function readPinned() {
@@ -61,6 +62,7 @@ async function boot() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) reload(); });
   await reload();
   registerServiceWorker();
+  refreshPush();
 }
 
 // ---------------- 데이터 ----------------
@@ -617,6 +619,11 @@ function connectionLists() {
       h('ul', { class: 'rows' }, partners.map((p) => h('li', { class: 'row-item' },
         h('span', { class: 'grow' }, p.nickname),
         h('button', {
+          class: `bell${p.notify ? ' on' : ''}`, type: 'button', 'aria-pressed': String(!!p.notify),
+          'aria-label': `${p.nickname} 완료 알림 ${p.notify ? '끄기' : '켜기'}`, title: p.notify ? '완료 알림 켜짐' : '완료 알림 꺼짐',
+          onclick: () => act(() => store.setShareNotify(p.id, !p.notify)),
+        }, p.notify ? '🔔' : '🔕'),
+        h('button', {
           class: 'btn btn-sm btn-danger-ghost', type: 'button',
           onclick: () => { if (confirm(`${p.nickname}님과 연결을 해제할까요? 서로의 할 일이 더 이상 보이지 않아요.`)) act(() => store.revokeShare(p.id)); },
         }, '연결 해제'))))) : null,
@@ -762,6 +769,8 @@ function settingsSheet() {
           : h('p', { class: 'hint' }, '연결된 상대가 없어요.'),
         h('button', { class: 'btn btn-sm', type: 'button', onclick: () => openSheet('partner') }, icon('userPlus'), '상대 추가')),
 
+      h('div', { class: 'section' }, h('h3', null, '알림'), pushSection()),
+
       h('div', { class: 'section' }, h('h3', null, '카테고리와 공개 범위'),
         h('p', { class: 'hint' }, '비공개 카테고리의 할 일은 상대에게 보이지 않아요. 색상 원을 누르면 색이 바뀌어요.'),
         h('ul', { class: 'rows' }, cats.map((c, i) => h('li', { class: 'row-item cat-row' },
@@ -812,7 +821,7 @@ function settingsSheet() {
         h('p', { class: 'hint' }, `핵심 기능(할 일, 상대 추가, 공유 보기)은 앞으로도 무료로 유지합니다. · 버전 ${config.version}${store.mode === 'local' ? ' · 데모 모드' : ''}`)),
 
       h('div', { class: 'section' },
-        h('button', { class: 'btn btn-block', type: 'button', onclick: () => act(() => store.signOut()) }, '로그아웃'),
+        h('button', { class: 'btn btn-block', type: 'button', onclick: () => act(signOut) }, '로그아웃'),
         h('button', {
           class: 'btn btn-block btn-danger-ghost', type: 'button',
           onclick: () => {
@@ -897,6 +906,86 @@ function monthHolidayList(y, m) {
 
 async function copy(text) {
   try { await navigator.clipboard.writeText(text); toast('복사했어요'); } catch { toast(text); }
+}
+
+// ---------------- 푸시 알림 ----------------
+function pushEnv() {
+  if (!store.pushSupported || !config.vapidPublicKey) return 'server-only';
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    return ios && !standalone ? 'ios-install' : 'unsupported';
+  }
+  if (Notification.permission === 'denied') return 'denied';
+  return 'ok';
+}
+
+async function currentSubscription() {
+  const reg = await navigator.serviceWorker?.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+async function saveSubscription(sub) {
+  const j = sub.toJSON();
+  await store.savePushSubscription({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth });
+}
+
+// 이 기기의 구독 상태를 읽고, 로그인한 계정에 다시 연결해 둔다
+async function refreshPush() {
+  if (pushEnv() !== 'ok') return;
+  try {
+    const sub = await currentSubscription();
+    state.pushOn = !!sub && Notification.permission === 'granted';
+    if (state.pushOn && state.me && !state.me.needsProfile) await saveSubscription(sub);
+  } catch (e) { console.error(e); }
+  render();
+}
+
+async function enablePush() {
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('알림이 허용되지 않았어요. 브라우저나 휴대폰 설정에서 이 사이트 알림을 허용해 주세요');
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription())
+    || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(config.vapidPublicKey) });
+  await saveSubscription(sub);
+  state.pushOn = true;
+  return '이 기기에서 알림을 받아요';
+}
+
+async function disablePush() {
+  const sub = await currentSubscription();
+  if (sub) {
+    await store.deletePushSubscription(sub.endpoint).catch(() => {});
+    await sub.unsubscribe();
+  }
+  state.pushOn = false;
+  return '이 기기의 알림을 껐어요';
+}
+
+async function signOut() {
+  if (store.pushSupported) {
+    const sub = await currentSubscription().catch(() => null);
+    if (sub) await store.deletePushSubscription(sub.endpoint).catch(() => {});
+  }
+  await store.signOut();
+}
+
+function pushSection() {
+  const env = pushEnv();
+  const hint = (t) => h('p', { class: 'hint' }, t);
+  if (env === 'server-only') return hint('데모 모드에서는 알림을 받을 수 없어요.');
+  if (env === 'ios-install') return hint('아이폰은 사파리 공유 버튼 → "홈 화면에 추가"로 설치한 앱에서 알림을 켤 수 있어요.');
+  if (env === 'unsupported') return hint('이 브라우저는 알림을 지원하지 않아요.');
+  if (env === 'denied') return hint('알림이 차단돼 있어요. 브라우저나 휴대폰 설정에서 이 사이트의 알림을 허용해 주세요.');
+  return [
+    h('div', { class: 'row gap' },
+      h('span', { class: 'grow' }, state.pushOn ? '🔔 이 기기에서 알림 받는 중' : '이 기기에서 알림 꺼짐'),
+      h('button', {
+        class: `btn btn-sm${state.pushOn ? '' : ' btn-primary'}`, type: 'button',
+        onclick: () => act(state.pushOn ? disablePush : enablePush),
+      }, state.pushOn ? '끄기' : '알림 켜기')),
+    hint('친구가 공개 카테고리의 할 일을 완료하면 알려 드려요. 친구별로 끄려면 연결 관리에서 🔔를 누르세요.'),
+  ];
 }
 
 function registerServiceWorker() {

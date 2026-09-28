@@ -433,3 +433,7 @@ input, select, textarea { -webkit-user-select: text; user-select: text; }
 .reorder button:not(:disabled):hover, .reorder button:not(:disabled):active { background: var(--surface-2); color: var(--text); }
 .reorder button:disabled { opacity: .25; }
 .reorder .ico { width: 16px; height: 16px; }
+
+/* ---------- 친구별 완료 알림 🔔 ---------- */
+.bell { flex: none; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-size: 15px; filter: grayscale(1); opacity: .6; }
+.bell.on { filter: none; opacity: 1; border-color: var(--me); background: var(--me-soft); }
