@@ -398,3 +398,16 @@ input:focus, select:focus { outline: none; border-color: var(--me); box-shadow: 
 .hol-tag { margin-left: 8px; font-size: 13px; font-weight: 700; color: var(--sun); vertical-align: 2px; }
 .hol-list { list-style: none; margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
 .hol-list b { display: inline-block; min-width: 72px; color: var(--sun); font-weight: 700; }
+
+/* ---------- 휴대폰에서 앱처럼 고정: 확대·튕김·길게 눌러 선택 막기 ---------- */
+html, body { overscroll-behavior: none; }
+body {
+  touch-action: manipulation; /* 두 번 톡 확대 막기 */
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+}
+input, select, textarea { -webkit-user-select: text; user-select: text; }
+/* 아이폰은 16px보다 작은 입력칸을 누르면 화면을 확대하므로 터치 기기에선 16px로 */
+@media (pointer: coarse) {
+  input:not([type=checkbox]), select { font-size: 16px !important; }
+}

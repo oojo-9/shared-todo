@@ -56,6 +56,8 @@ async function boot() {
   store.subscribe(scheduleReload);
   store.onAuthChange(() => { state.sheet = null; state.drafts = {}; reload(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.sheet) closeSheet(); });
+  // 아이폰 사파리는 user-scalable=no를 무시하므로 두 손가락 확대를 직접 막는다
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) reload(); });
   await reload();
   registerServiceWorker();
