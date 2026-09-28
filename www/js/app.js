@@ -450,7 +450,7 @@ function myPane() {
       list.length
         ? h('ul', { class: 'todo-list' }, list.map((t) => todoRow(t, { editable: true, cats: catMapOf(state.me.id) })))
         : h('p', { class: 'empty-text' }, '할 일을 추가해 보세요')),
-    addForm('add-share', false),
+    addForm('add-share', 'below'),
     h('div', { class: 'pane-foot' }, '추가 · 체크 · 수정 가능'));
 }
 
@@ -470,30 +470,35 @@ function openNewCategory(ret) {
   openSheet('newcat', { ret });
 }
 
-function addForm(key, withCategory) {
+// 할 일 추가 입력란. catMode: 'inline'(내 목록: 카테고리 | 입력 | +) / 'below'(공유 보기: 입력 | + 아래에 카테고리)
+// 고른 카테고리는 두 화면이 함께 기억한다.
+function addForm(key, catMode) {
   const cats = state.cats.get(state.me.id) || [];
   const last = prefGet('lastCat');
   const catId = cats.some((c) => c.id === last) ? last : '';
-  return h('form', {
-    class: `add-form${withCategory ? ' with-cat' : ''}`,
-    onsubmit: (e) => {
-      e.preventDefault();
-      const title = (state.drafts[key] || '').trim();
-      if (!title) return;
-      state.drafts[key] = '';
-      act(() => store.createTodo({ date: state.selected, title, category_id: catId || null }));
-    },
-  },
-  withCategory ? h('select', {
+  const select = h('select', {
     class: 'cat-select', 'aria-label': '카테고리', value: catId,
     onchange: (e) => {
       if (e.target.value === NEW_CAT) { e.target.value = catId; openNewCategory({ after: 'add' }); return; }
       prefSet('lastCat', e.target.value || null);
       render();
     },
-  }, categoryOptions(cats)) : null,
-  draftInput(key, { placeholder: '할 일 추가', maxlength: 200, enterkeyhint: 'done', 'aria-label': '할 일 추가', autocomplete: 'off' }),
-  h('button', { class: 'add-btn', type: 'submit', 'aria-label': '추가' }, icon('plus')));
+  }, categoryOptions(cats));
+  const input = draftInput(key, { placeholder: '할 일 추가', maxlength: 200, enterkeyhint: 'done', 'aria-label': '할 일 추가', autocomplete: 'off' });
+  const addBtn = h('button', { class: 'add-btn', type: 'submit', 'aria-label': '추가' }, icon('plus'));
+  const onsubmit = (e) => {
+    e.preventDefault();
+    const title = (state.drafts[key] || '').trim();
+    if (!title) return;
+    state.drafts[key] = '';
+    act(() => store.createTodo({ date: state.selected, title, category_id: catId || null }));
+  };
+  if (catMode === 'below') {
+    return h('form', { class: 'add-form stacked', onsubmit },
+      h('div', { class: 'add-row' }, input, addBtn),
+      select);
+  }
+  return h('form', { class: 'add-form with-cat', onsubmit }, select, input, addBtn);
 }
 
 // ---------- 내 목록 ----------
@@ -515,7 +520,7 @@ function mineView() {
         holidayOf(state.selected) ? h('span', { class: 'hol-tag' }, holidayOf(state.selected)) : null),
       list.length ? h('span', { class: 'mine-progress' }, `${done}/${list.length} 완료`) : null),
     list.length ? h('div', { class: 'bar' }, h('div', { class: 'bar-fill', style: { width: `${(done / list.length) * 100}%` } })) : null,
-    addForm('add-mine', true),
+    addForm('add-mine', 'inline'),
     groups.length ? groups.map(({ c, items }) => h('div', { class: 'group' },
       h('div', { class: 'group-head', style: { '--cat': c?.color || 'var(--line-strong)' } },
         h('i', { class: 'cat-dot' }), c ? c.name : '카테고리 없음',
