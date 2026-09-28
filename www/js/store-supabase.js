@@ -179,6 +179,11 @@ export async function createSupabaseStore(cfg) {
 
     // ---- 푸시 알림 ----
     pushSupported: true,
+    // 매일 7시·12시·19시 하루 알림 (기본 켜짐)
+    async setDailyReminders(enabled) {
+      ok(await sb.from('users').update({ daily_reminders: !!enabled }).eq('id', uidOrThrow()));
+      me = null;
+    },
     async setShareNotify(partnerId, enabled) {
       ok(await sb.rpc('set_share_notify', { partner: partnerId, enabled }));
     },

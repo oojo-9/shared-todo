@@ -990,7 +990,27 @@ function pushSection() {
         onclick: () => act(state.pushOn ? disablePush : enablePush),
       }, state.pushOn ? '끄기' : '알림 켜기')),
     hint('친구가 공개 카테고리의 할 일을 완료하면 알려 드려요. 친구별로 끄려면 연결 관리에서 🔔를 누르세요.'),
+    dailyToggle(),
   ];
+}
+
+// 매일 7시·12시·19시 하루 알림 켜기/끄기 (계정 설정이라 내 모든 기기에 적용)
+function dailyToggle() {
+  const on = state.me.daily_reminders !== false;
+  return h('div', { class: 'daily-row' },
+    h('div', { class: 'grow' },
+      h('div', { class: 'daily-title' }, '하루 알림'),
+      h('div', { class: 'hint' }, '매일 아침 7시 · 낮 12시 · 저녁 7시')),
+    h('label', { class: 'switch' },
+      h('input', {
+        type: 'checkbox', checked: on, 'aria-label': '하루 알림',
+        onchange: (e) => act(async () => {
+          await store.setDailyReminders(e.target.checked);
+          return e.target.checked ? '하루 알림을 켰어요' : '하루 알림을 껐어요';
+        }),
+      }),
+      h('span', { class: 'switch-ui' }),
+      h('span', { class: 'switch-label' }, on ? '켜짐' : '꺼짐')));
 }
 
 function registerServiceWorker() {

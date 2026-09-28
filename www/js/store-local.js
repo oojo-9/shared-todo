@@ -261,6 +261,10 @@ export function createLocalStore() {
     },
     // 데모 모드에선 푸시를 보낼 서버가 없어서 친구별 설정만 저장한다
     pushSupported: false,
+    async setDailyReminders(enabled) {
+      need().daily_reminders = !!enabled;
+      commit();
+    },
     async setShareNotify(partnerId, enabled) {
       const me = need();
       const s = db.shares.find((x) => x.owner_id === partnerId && x.viewer_id === me.id);

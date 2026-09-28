@@ -453,3 +453,8 @@ input[type=date]::-webkit-date-and-time-value { text-align: left; margin: 0; }
 .add-form.stacked .add-row { display: flex; gap: 6px; }
 .add-form.stacked .add-row input { flex: 1; min-width: 0; }
 .add-form.stacked .cat-select { width: 100%; max-width: none; min-height: 36px; padding: 4px 10px; font-size: 13.5px; background: var(--surface); }
+
+/* ---------- 하루 알림 ---------- */
+.daily-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.daily-title { font-weight: 700; }
+.daily-row .hint { margin: 2px 0 0; }
