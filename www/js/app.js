@@ -764,7 +764,16 @@ function settingsSheet() {
 
       h('div', { class: 'section' }, h('h3', null, '카테고리와 공개 범위'),
         h('p', { class: 'hint' }, '비공개 카테고리의 할 일은 상대에게 보이지 않아요. 색상 원을 누르면 색이 바뀌어요.'),
-        h('ul', { class: 'rows' }, cats.map((c) => h('li', { class: 'row-item cat-row' },
+        h('ul', { class: 'rows' }, cats.map((c, i) => h('li', { class: 'row-item cat-row' },
+          h('div', { class: 'reorder' },
+            h('button', {
+              type: 'button', 'aria-label': `${c.name} 위로`, disabled: i === 0,
+              onclick: () => moveCategory(i, -1),
+            }, icon('up')),
+            h('button', {
+              type: 'button', 'aria-label': `${c.name} 아래로`, disabled: i === cats.length - 1,
+              onclick: () => moveCategory(i, 1),
+            }, icon('down'))),
           h('button', {
             class: 'swatch', type: 'button', style: { background: c.color }, 'aria-label': `${c.name} 색상 바꾸기`,
             onclick: () => act(() => store.updateCategory(c.id, { color: COLORS[(COLORS.indexOf(c.color) + 1) % COLORS.length] })),
@@ -812,6 +821,17 @@ function settingsSheet() {
         }, '계정 삭제')),
     ],
   };
+}
+
+// 카테고리를 한 칸 위/아래로. 화면에 먼저 반영하고 저장한다.
+function moveCategory(i, dir) {
+  const cats = [...(state.cats.get(state.me.id) || [])];
+  const j = i + dir;
+  if (j < 0 || j >= cats.length) return;
+  [cats[i], cats[j]] = [cats[j], cats[i]];
+  state.cats.set(state.me.id, cats);
+  render();
+  act(() => store.reorderCategories(cats.map((c) => c.id)));
 }
 
 function monthSheet(s) {

@@ -168,6 +168,11 @@ export function createLocalStore() {
       if ('is_public' in patch) c.is_public = !!patch.is_public;
       commit();
     },
+    // ids 순서대로 sort를 다시 매긴다
+    async reorderCategories(ids) {
+      ids.forEach((id, i) => { own(db.categories, id).sort = i; });
+      commit();
+    },
     async deleteCategory(id) {
       own(db.categories, id);
       db.categories = db.categories.filter((c) => c.id !== id);

@@ -422,3 +422,14 @@ input, select, textarea { -webkit-user-select: text; user-select: text; }
 .toast { display: flex; align-items: center; gap: 14px; }
 .toast.has-action { pointer-events: auto; }
 .toast-action { border: 0; background: none; padding: 2px 0; color: var(--me-soft); font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+
+/* ---------- 카테고리 순서 바꾸기 ---------- */
+.cat-row { gap: 6px; }
+.reorder { flex: none; display: flex; flex-direction: column; }
+.reorder button {
+  width: 28px; height: 20px; padding: 0; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: none; color: var(--muted);
+}
+.reorder button:not(:disabled):hover, .reorder button:not(:disabled):active { background: var(--surface-2); color: var(--text); }
+.reorder button:disabled { opacity: .25; }
+.reorder .ico { width: 16px; height: 16px; }

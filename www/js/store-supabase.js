@@ -122,6 +122,11 @@ export async function createSupabaseStore(cfg) {
       if ('is_public' in patch) p.is_public = !!patch.is_public;
       ok(await sb.from('categories').update(p).eq('id', id));
     },
+    // ids 순서대로 sort를 다시 매긴다
+    async reorderCategories(ids) {
+      const results = await Promise.all(ids.map((id, i) => sb.from('categories').update({ sort: i }).eq('id', id)));
+      results.forEach(ok);
+    },
     async deleteCategory(id) {
       ok(await sb.from('categories').delete().eq('id', id)); // 할 일은 FK cascade로 함께 삭제
     },
