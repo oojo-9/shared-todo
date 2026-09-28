@@ -678,9 +678,9 @@ function todoSheet(s) {
           type: 'button', role: 'radio', 'aria-checked': String(st === status), class: `seg s-${st}${st === status ? ' active' : ''}`,
           onclick: () => { state.drafts['e-status'] = st; render(); },
         }, STATUS_LABEL[st])))),
-      h('div', { class: 'row gap' },
-        h('label', { class: 'field grow' }, h('span', null, '날짜'), draftInput('e-date', { type: 'date', required: true })),
-        h('label', { class: 'field grow' }, h('span', null, '카테고리'),
+      h('div', { class: 'two-col' },
+        h('label', { class: 'field' }, h('span', null, '날짜'), draftInput('e-date', { type: 'date', required: true })),
+        h('label', { class: 'field' }, h('span', null, '카테고리'),
           h('select', {
             value: state.drafts['e-cat'] || '',
             onchange: (e) => {
