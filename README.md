@@ -70,6 +70,10 @@ python -m http.server 5173 --directory www
 3. Edge Functions → Deploy a new function → Via Editor → `supabase/functions/notify-done/index.ts` 붙여 넣기, 이름 `notify-done`, 배포 후 **Enforce JWT Verification 끄기**
 4. Edge Functions → Secrets에 `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `PUSH_HOOK_SECRET` 등록
 5. `www/js/config.js`의 `vapidPublicKey`에 공개 키 입력
+6. 하루 알림(매일 07·12·19시, 한국 시간): SQL Editor에서 `supabase/003_daily.sql` 실행 (pg_cron 예약)
+7. 연결 요청·수락 알림: SQL Editor에서 `supabase/004_share_push.sql` 실행
+
+알림 서버(`notify-done`)는 할 일 완료 알림, 하루 알림, 연결 요청·수락 알림을 모두 처리합니다. 코드를 바꾸면 대시보드에서 다시 붙여 넣고 Deploy 하세요.
 
 키와 비밀값은 `.secrets/push-keys.json`(git에 올라가지 않음)에 있습니다. 아이폰은 홈 화면에 추가한 앱에서만 알림을 받을 수 있습니다.
 
