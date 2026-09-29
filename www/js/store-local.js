@@ -188,13 +188,32 @@ export function createLocalStore() {
         .sort((a, b) => a.sort - b.sort)
         .map((t) => ({ ...t }));
     },
-    async createTodo({ date, title, category_id, status = 'todo', sort = Date.now() }) {
+    async createTodo(todo) { return this.createTodos([todo]); },
+    // 여러 개를 한 번에 (반복 일정)
+    async createTodos(list) {
       const me = need();
-      const cat = category_id && db.categories.some((c) => c.id === category_id && c.user_id === me.id) ? category_id : null;
-      db.todos.push({
-        id: uid(), user_id: me.id, category_id: cat, date, title: validText(title, '할 일', 200),
-        status: STATUS.includes(status) ? status : 'todo', sort, created_at: now(), updated_at: now(),
+      for (const { date, title, category_id, status = 'todo', sort = Date.now(), series_id = null, repeat = null } of list) {
+        const cat = category_id && db.categories.some((c) => c.id === category_id && c.user_id === me.id) ? category_id : null;
+        db.todos.push({
+          id: uid(), user_id: me.id, category_id: cat, date, title: validText(title, '할 일', 200),
+          status: STATUS.includes(status) ? status : 'todo', sort, series_id, repeat, created_at: now(), updated_at: now(),
+        });
+      }
+      commit();
+    },
+    // 반복 일정: 이 날부터 같은 묶음 전체 수정/삭제
+    async updateSeries(seriesId, fromDate, patch) {
+      need();
+      db.todos.filter((t) => t.series_id === seriesId && t.user_id === sessionId && t.date >= fromDate).forEach((t) => {
+        if ('title' in patch) t.title = validText(patch.title, '할 일', 200);
+        if ('category_id' in patch) t.category_id = patch.category_id || null;
+        t.updated_at = now();
       });
+      commit();
+    },
+    async deleteSeries(seriesId, fromDate) {
+      need();
+      db.todos = db.todos.filter((t) => !(t.series_id === seriesId && t.user_id === sessionId && t.date >= fromDate));
       commit();
     },
     async updateTodo(id, patch) {

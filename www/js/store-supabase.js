@@ -135,11 +135,25 @@ export async function createSupabaseStore(cfg) {
       return ok(await sb.from('todos').select('*').eq('user_id', userId)
         .gte('date', from).lte('date', to).order('sort').order('created_at'));
     },
-    async createTodo({ date, title, category_id, status = 'todo', sort = Date.now() }) {
-      ok(await sb.from('todos').insert({
-        user_id: uidOrThrow(), date, title: validText(title, '할 일', 200),
-        category_id: category_id || null, status, sort,
+    async createTodo(todo) { return this.createTodos([todo]); },
+    // 여러 개를 한 번에 (반복 일정)
+    async createTodos(list) {
+      const userId = uidOrThrow();
+      const rows = list.map(({ date, title, category_id, status = 'todo', sort = Date.now(), series_id = null, repeat = null }) => ({
+        user_id: userId, date, title: validText(title, '할 일', 200),
+        category_id: category_id || null, status, sort, series_id, repeat,
       }));
+      ok(await sb.from('todos').insert(rows));
+    },
+    // 반복 일정: 이 날부터 같은 묶음 전체 수정/삭제
+    async updateSeries(seriesId, fromDate, patch) {
+      const p = {};
+      if ('title' in patch) p.title = validText(patch.title, '할 일', 200);
+      if ('category_id' in patch) p.category_id = patch.category_id || null;
+      ok(await sb.from('todos').update(p).eq('series_id', seriesId).gte('date', fromDate));
+    },
+    async deleteSeries(seriesId, fromDate) {
+      ok(await sb.from('todos').delete().eq('series_id', seriesId).gte('date', fromDate));
     },
     async updateTodo(id, patch) {
       const p = { ...patch };

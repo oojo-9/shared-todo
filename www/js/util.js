@@ -66,6 +66,34 @@ export const today = () => ymd(new Date());
 export const WEEK = ['월', '화', '수', '목', '금', '토', '일'];
 export const weekdayOf = (s) => WEEK[(parseYmd(s).getDay() + 6) % 7];
 
+// ---- 반복 일정 ----
+// freq: 'daily' | 'weekly'(days: 0=월…6=일) | 'monthly'(mday: 1~31, 없는 날은 그 달 말일)
+export const REPEAT_MAX_DAYS = 366;
+export function expandRepeat({ freq, days = [], mday = 1, start, end }) {
+  if (!start || !end || end < start) return [];
+  const out = [];
+  if (freq === 'monthly') {
+    const s = parseYmd(start);
+    for (let y = s.getFullYear(), m = s.getMonth(); out.length <= REPEAT_MAX_DAYS; m++) {
+      if (m > 11) { m = 0; y++; }
+      const last = new Date(y, m + 1, 0).getDate();
+      const d = ymd(new Date(y, m, Math.min(mday, last)));
+      if (d > end) break;
+      if (d >= start) out.push(d);
+    }
+    return out;
+  }
+  for (let d = start; d <= end && out.length <= REPEAT_MAX_DAYS; d = addDays(d, 1)) {
+    if (freq === 'daily' || days.includes((parseYmd(d).getDay() + 6) % 7)) out.push(d);
+  }
+  return out;
+}
+export function repeatLabel({ freq, days = [], mday = 1 }) {
+  if (freq === 'daily') return '매일';
+  if (freq === 'weekly') return `매주 ${[...days].sort((a, b) => a - b).map((i) => WEEK[i]).join('·')}`;
+  return `매월 ${mday}일`;
+}
+
 // ---- 할 일 상태 3단계 ----
 export const STATUS = ['todo', 'doing', 'done'];
 export const STATUS_LABEL = { todo: '할 일 전', doing: '진행중', done: '완료' };
@@ -118,10 +146,10 @@ export function toast(msg, action) {
     document.body.append(el);
   }
   const hide = () => el.classList.remove('show');
-  el.replaceChildren(h('span', null, msg), action ? h('button', {
+  el.replaceChildren(...[h('span', null, msg), action ? h('button', {
     class: 'toast-action', type: 'button',
     onclick: () => { hide(); action.onClick(); },
-  }, action.label) : null);
+  }, action.label) : null].filter(Boolean)); // replaceChildren은 null을 "null" 글자로 넣으므로 걸러 낸다
   el.classList.toggle('has-action', !!action);
   el.classList.add('show');
   clearTimeout(toastTimer);

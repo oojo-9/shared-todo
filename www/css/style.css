@@ -458,3 +458,17 @@ input[type=date]::-webkit-date-and-time-value { text-align: left; margin: 0; }
 .daily-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
 .daily-title { font-weight: 700; }
 .daily-row .hint { margin: 2px 0 0; }
+
+/* ---------- 반복 일정 ---------- */
+.rep-tag { font-size: 11px; }
+.rep-link { align-self: flex-start; margin: 2px 0 -4px; padding: 6px 2px; font-size: 14px; }
+.rep-btn { flex: none; width: 38px; min-height: 36px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 15px; }
+.add-form.stacked .add-row .cat-select { flex: 1; min-width: 0; }
+.weekday-chips { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.wd-chip { min-height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-weight: 700; }
+.wd-chip.is-sat { color: var(--sat); }
+.wd-chip.is-red { color: var(--sun); }
+.wd-chip.on { background: var(--me); border-color: var(--me); color: var(--on-me); }
+.rep-preview { padding: 10px 12px; border-radius: 12px; background: var(--me-soft); font-size: 13.5px; display: flex; flex-direction: column; gap: 2px; }
+.rep-preview.warn { background: var(--partner-soft); color: var(--danger); font-weight: 600; }
+.btn:disabled { opacity: .45; cursor: default; }

@@ -2,6 +2,7 @@ import { config } from './config.js';
 import {
   h, icon, ymd, parseYmd, addDays, startOfWeek, today, WEEK, weekdayOf,
   STATUS, STATUS_LABEL, nextStatus, COLORS, toast, prefGet, prefSet, b64urlToBytes,
+  expandRepeat, repeatLabel, REPEAT_MAX_DAYS, uid,
 } from './util.js';
 import { createLocalStore } from './store-local.js';
 import { holidayOf } from './holidays.js';
@@ -366,7 +367,8 @@ function todoRow(t, { editable, cats, deletable = false }) {
       onkeydown: editable ? (e) => { if (e.key === 'Enter') openTodo(t); } : null,
     },
     h('div', { class: 'todo-title' }, t.title),
-    (c || t.status === 'doing') ? h('div', { class: 'todo-meta' },
+    (c || t.status === 'doing' || t.series_id) ? h('div', { class: 'todo-meta' },
+      t.series_id ? h('span', { class: 'rep-tag', title: t.repeat || '반복 일정' }, '🔁') : null,
       c ? h('span', { class: 'cat-tag' }, h('i', { class: 'cat-dot' }), c.name) : null,
       t.status === 'doing' ? h('span', { class: 'doing-tag' }, '진행중') : null) : null),
     deletable ? h('button', {
@@ -386,6 +388,7 @@ function deleteTodo(t) {
       label: '되돌리기',
       onClick: () => act(() => store.createTodo({
         date: t.date, title: t.title, category_id: t.category_id, status: t.status, sort: t.sort,
+        series_id: t.series_id ?? null, repeat: t.repeat ?? null,
       })),
     });
   });
@@ -496,7 +499,8 @@ function addForm(key, catMode) {
   if (catMode === 'below') {
     return h('form', { class: 'add-form stacked', onsubmit },
       h('div', { class: 'add-row' }, input, addBtn),
-      select);
+      h('div', { class: 'add-row' }, select,
+        h('button', { class: 'rep-btn', type: 'button', 'aria-label': '반복 일정 추가', title: '반복 일정 추가', onclick: () => openRepeat(key) }, '🔁')));
   }
   return h('form', { class: 'add-form with-cat', onsubmit }, select, input, addBtn);
 }
@@ -521,6 +525,7 @@ function mineView() {
       list.length ? h('span', { class: 'mine-progress' }, `${done}/${list.length} 완료`) : null),
     list.length ? h('div', { class: 'bar' }, h('div', { class: 'bar-fill', style: { width: `${(done / list.length) * 100}%` } })) : null,
     addForm('add-mine', 'inline'),
+    h('button', { class: 'link-btn rep-link', type: 'button', onclick: () => openRepeat('add-mine') }, '🔁 반복 일정 추가'),
     groups.length ? groups.map(({ c, items }) => h('div', { class: 'group' },
       h('div', { class: 'group-head', style: { '--cat': c?.color || 'var(--line-strong)' } },
         h('i', { class: 'cat-dot' }), c ? c.name : '카테고리 없음',
@@ -551,13 +556,13 @@ async function openMonth() {
 }
 
 function openTodo(t) {
-  Object.assign(state.drafts, { 'e-title': t.title, 'e-date': t.date, 'e-cat': t.category_id || '', 'e-status': t.status });
+  Object.assign(state.drafts, { 'e-title': t.title, 'e-date': t.date, 'e-cat': t.category_id || '', 'e-status': t.status, 'e-scope': 'one' });
   openSheet('todo', { id: t.id });
 }
 
 function sheetView() {
   const s = state.sheet;
-  const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet };
+  const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet, repeat: repeatSheet };
   const { title, body } = builders[s.type](s);
   return h('div', {
     class: 'sheet-overlay',
@@ -665,6 +670,9 @@ function pickSheet() {
 function todoSheet(s) {
   const cats = state.cats.get(state.me.id) || [];
   const status = state.drafts['e-status'];
+  const todo = (state.todos.get(state.me.id) || []).find((x) => x.id === s.id);
+  const series = todo?.series_id ? { id: todo.series_id, from: todo.date, label: todo.repeat } : null;
+  const scopeAll = series && state.drafts['e-scope'] === 'all';
   const save = (e) => {
     e?.preventDefault();
     const patch = {
@@ -672,11 +680,34 @@ function todoSheet(s) {
       category_id: state.drafts['e-cat'] || null, status,
     };
     state.sheet = null;
-    act(() => store.updateTodo(s.id, patch));
+    act(async () => {
+      // 제목·카테고리는 이 날부터 반복 전체에, 날짜·상태는 이 일정에만
+      if (scopeAll) await store.updateSeries(series.id, series.from, { title: patch.title, category_id: patch.category_id });
+      await store.updateTodo(s.id, patch);
+      return scopeAll ? '이 날부터 반복 일정을 모두 바꿨어요' : undefined;
+    });
+  };
+  const remove = () => {
+    if (scopeAll) {
+      if (!confirm(`${series.from.slice(5).replace('-', '/')}부터 이 반복 일정(${series.label || '반복'})을 모두 삭제할까요?`)) return;
+      state.sheet = null;
+      act(async () => { await store.deleteSeries(series.id, series.from); return '반복 일정을 삭제했어요'; });
+      return;
+    }
+    if (confirm('이 할 일을 삭제할까요?')) { state.sheet = null; act(() => store.deleteTodo(s.id)); }
   };
   return {
     title: '할 일 수정',
     body: h('form', { class: 'stack', onsubmit: save },
+      series ? h('div', { class: 'field' },
+        h('span', null, `🔁 반복 일정 · ${series.label || ''}`),
+        h('div', { class: 'segmented two', role: 'radiogroup' },
+          [['one', '이 일정만'], ['all', '이 날부터 모두']].map(([v, label]) => h('button', {
+            type: 'button', role: 'radio', 'aria-checked': String((state.drafts['e-scope'] || 'one') === v),
+            class: `seg${(state.drafts['e-scope'] || 'one') === v ? ' active' : ''}`,
+            onclick: () => { state.drafts['e-scope'] = v; render(); },
+          }, label))),
+        scopeAll ? h('p', { class: 'hint' }, '제목·카테고리 수정과 삭제가 이 날 이후의 반복 일정 전체에 적용돼요.') : null) : null,
       h('label', { class: 'field' }, h('span', null, '제목'), draftInput('e-title', { maxlength: 200, required: true })),
       h('div', { class: 'field' }, h('span', null, '상태'),
         h('div', { class: 'segmented', role: 'radiogroup' }, STATUS.map((st) => h('button', {
@@ -696,10 +727,102 @@ function todoSheet(s) {
       h('div', { class: 'row gap end' },
         h('button', {
           class: 'btn btn-danger-ghost', type: 'button',
-          onclick: () => { if (confirm('이 할 일을 삭제할까요?')) { state.sheet = null; act(() => store.deleteTodo(s.id)); } },
-        }, icon('trash'), '삭제'),
+          onclick: remove,
+        }, icon('trash'), scopeAll ? '모두 삭제' : '삭제'),
         h('span', { class: 'grow' }),
         h('button', { class: 'btn btn-primary', type: 'submit' }, '저장'))),
+  };
+}
+
+// ---------- 반복 일정 추가 ----------
+function openRepeat(fromKey) {
+  const cats = state.cats.get(state.me.id) || [];
+  const last = prefGet('lastCat');
+  const d = parseYmd(state.selected);
+  Object.assign(state.drafts, {
+    'r-title': (state.drafts[fromKey] || '').trim(),
+    'r-cat': cats.some((c) => c.id === last) ? last : '',
+    'r-freq': 'daily',
+    'r-days': [(d.getDay() + 6) % 7],
+    'r-mday': String(d.getDate()),
+    'r-start': state.selected,
+    'r-end': addDays(state.selected, 29),
+  });
+  openSheet('repeat', { fromKey });
+}
+
+function repeatSheet(s) {
+  const cats = state.cats.get(state.me.id) || [];
+  const dr = state.drafts;
+  const rule = { freq: dr['r-freq'], days: dr['r-days'], mday: Math.min(31, Math.max(1, Number(dr['r-mday']) || 1)), start: dr['r-start'], end: dr['r-end'] };
+  const tooLong = rule.start && rule.end && rule.end > addDays(rule.start, REPEAT_MAX_DAYS - 1);
+  const dates = tooLong ? [] : expandRepeat(rule);
+  const md = (x) => { const t = parseYmd(x); return `${t.getMonth() + 1}/${t.getDate()}(${weekdayOf(x)})`; };
+  let problem = null;
+  if (!rule.start || !rule.end) problem = '시작일과 종료일을 골라 주세요';
+  else if (rule.end < rule.start) problem = '종료일이 시작일보다 빨라요';
+  else if (tooLong) problem = '최대 1년까지 만들 수 있어요';
+  else if (rule.freq === 'weekly' && !rule.days.length) problem = '요일을 하나 이상 골라 주세요';
+  else if (!dates.length) problem = '이 기간에는 해당하는 날이 없어요';
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (problem) { toast(problem); return; }
+    const title = (dr['r-title'] || '').trim();
+    if (!title) { toast('할 일을 입력해 주세요'); return; }
+    const seriesId = uid();
+    const repeat = repeatLabel(rule);
+    const base = Date.now();
+    state.sheet = null;
+    if (s.fromKey) state.drafts[s.fromKey] = '';
+    act(async () => {
+      await store.createTodos(dates.map((date, i) => ({
+        date, title, category_id: dr['r-cat'] || null, sort: base + i, series_id: seriesId, repeat,
+      })));
+      return `🔁 ${repeat} · ${dates.length}개 일정을 추가했어요`;
+    });
+  };
+
+  return {
+    title: '반복 일정 추가',
+    body: h('form', { class: 'stack', onsubmit: submit },
+      h('label', { class: 'field' }, h('span', null, '할 일'),
+        draftInput('r-title', { placeholder: '예: 영단어 30개 외우기', maxlength: 200, required: true, autocomplete: 'off' })),
+      h('label', { class: 'field' }, h('span', null, '카테고리'),
+        h('select', {
+          value: dr['r-cat'] || '',
+          onchange: (e) => { dr['r-cat'] = e.target.value === NEW_CAT ? dr['r-cat'] : e.target.value; if (e.target.value === NEW_CAT) { e.target.value = dr['r-cat'] || ''; toast('카테고리는 설정이나 할 일 추가란에서 먼저 만들어 주세요'); } },
+        }, categoryOptions(cats).slice(0, 2))),
+      h('div', { class: 'field' }, h('span', null, '반복'),
+        h('div', { class: 'segmented', role: 'radiogroup' },
+          [['daily', '매일'], ['weekly', '매주'], ['monthly', '매월']].map(([v, label]) => h('button', {
+            type: 'button', role: 'radio', 'aria-checked': String(rule.freq === v), class: `seg${rule.freq === v ? ' active' : ''}`,
+            onclick: () => { dr['r-freq'] = v; render(); },
+          }, label)))),
+      rule.freq === 'weekly' ? h('div', { class: 'field' }, h('span', null, '요일'),
+        h('div', { class: 'weekday-chips' }, WEEK.map((w, i) => {
+          const on = rule.days.includes(i);
+          return h('button', {
+            type: 'button', class: `wd-chip${on ? ' on' : ''}${i === 5 ? ' is-sat' : i === 6 ? ' is-red' : ''}`, 'aria-pressed': String(on),
+            onclick: () => { dr['r-days'] = on ? rule.days.filter((x) => x !== i) : [...rule.days, i]; render(); },
+          }, w);
+        }))) : null,
+      rule.freq === 'monthly' ? h('label', { class: 'field' }, h('span', null, '매월 며칠'),
+        h('select', {
+          value: String(rule.mday),
+          onchange: (e) => { dr['r-mday'] = e.target.value; render(); },
+        }, Array.from({ length: 31 }, (_, i) => h('option', { value: String(i + 1) }, `${i + 1}일${i + 1 >= 29 ? ' (없는 달은 말일)' : ''}`)))) : null,
+      h('div', { class: 'two-col' },
+        h('label', { class: 'field' }, h('span', null, '시작일'),
+          h('input', { type: 'date', value: dr['r-start'] || '', onchange: (e) => { dr['r-start'] = e.target.value; render(); } })),
+        h('label', { class: 'field' }, h('span', null, '종료일'),
+          h('input', { type: 'date', value: dr['r-end'] || '', onchange: (e) => { dr['r-end'] = e.target.value; render(); } }))),
+      h('div', { class: `rep-preview${problem ? ' warn' : ''}` },
+        problem || [
+          h('b', null, `🔁 ${repeatLabel(rule)} · 총 ${dates.length}개`),
+          h('div', null, dates.length <= 4 ? dates.map(md).join(', ') : `${md(dates[0])}, ${md(dates[1])} … ${md(dates[dates.length - 1])}`),
+        ]),
+      h('button', { class: 'btn btn-primary btn-block', type: 'submit', disabled: !!problem }, '추가')),
   };
 }
 
