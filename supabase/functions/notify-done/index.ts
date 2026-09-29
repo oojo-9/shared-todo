@@ -1,6 +1,6 @@
 // Supabase Edge Function: notify-done
 // 1) 할 일 완료: DB 트리거가 { todo_id }로 호출 → 볼 수 있고 알림을 켜 둔 친구들에게 푸시
-// 2) 하루 알림: pg_cron이 { type: 'daily', slot }로 호출 → 하루 알림을 켜 둔 사람 모두에게 푸시
+// 2) 하루 알림: pg_cron이 { type: 'daily', slot }로 호출 → 하루 알림을 켜 둔 사람 모두에게 푸시 (본문은 daily_quotes에서 매번 다른 멘트)
 // 3) 연결 요청·수락: shares 트리거가 { type: 'user', user_id, title, body, tag }로 호출 → 그 사람에게 푸시
 //    { dry_run: true }를 함께 보내면 보내지 않고 대상 수만 돌려준다 (점검용)
 // 필요한 Secrets: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, PUSH_HOOK_SECRET
@@ -15,8 +15,11 @@ webpush.setVapidDetails(
   Deno.env.get('VAPID_PRIVATE_KEY')!,
 );
 
-const DAILY: Record<string, { title: string; body: string }> = {
-  morning: { title: '☀️ 좋은 아침', body: '야무지게 하루를 살아보자! 오늘 일정 뭐야?' },
+// 하루 알림
+// - 아침(07시): 제목 ☀️ + 본문은 daily_quotes 표에서 매일 다른 멘트 (표가 비면 fallback)
+// - 점심·저녁: 고정 문구
+const DAILY: Record<string, { title: string; body: string; quote?: boolean }> = {
+  morning: { title: '☀️', body: '야무지게 하루를 살아보자! 오늘 일정 뭐야?', quote: true },
   noon: { title: '🕛 점심시간', body: '벌써 오후래, 남은 일정 체크해보자!' },
   evening: { title: '🌙 저녁 7시', body: '못한일정이 있다면 지금이라도 늦지않았어!' },
 };
@@ -48,9 +51,20 @@ async function daily(slot: string, dryRun: boolean) {
   const ids = (users ?? []).map((u) => u.id);
   if (!ids.length) return json({ sent: 0, targets: 0 });
   const { data: subs } = await db.from('push_subscriptions').select('*').in('user_id', ids);
-  if (dryRun) return json({ dry_run: true, slot, users: ids.length, devices: subs?.length ?? 0 });
-  const sent = await sendAll(subs ?? [], JSON.stringify({ ...msg, tag: `daily-${slot}` }));
-  return json({ slot, sent });
+  if (dryRun) {
+    // 점검: 멘트를 소모하지 않고 대상 수와 아직 안 쓴 멘트 수만 본다
+    const { count } = await db.from('daily_quotes').select('id', { count: 'exact', head: true }).eq('active', true).is('last_used_at', null);
+    return json({ dry_run: true, slot, users: ids.length, devices: subs?.length ?? 0, unused_quotes: count ?? 0 });
+  }
+  if (!subs?.length) return json({ slot, sent: 0 }); // 받을 기기가 없으면 멘트를 아끼기
+  let body = msg.body;
+  if (msg.quote) {
+    const { data: quote, error } = await db.rpc('pick_daily_quote');
+    if (error) console.error('pick_daily_quote failed', error.message);
+    if (typeof quote === 'string' && quote) body = quote;
+  }
+  const sent = await sendAll(subs, JSON.stringify({ title: msg.title, body, tag: `daily-${slot}` }));
+  return json({ slot, sent, body });
 }
 
 // 한 사람의 모든 기기로 보낸다 (연결 요청·수락 알림, 문구는 DB 트리거가 만든다)

@@ -72,6 +72,7 @@ python -m http.server 5173 --directory www
 5. `www/js/config.js`의 `vapidPublicKey`에 공개 키 입력
 6. 하루 알림(매일 07·12·19시, 한국 시간): SQL Editor에서 `supabase/003_daily.sql` 실행 (pg_cron 예약)
 7. 연결 요청·수락 알림: SQL Editor에서 `supabase/004_share_push.sql` 실행
+8. 아침 멘트: SQL Editor에서 `supabase/006_quotes.sql` 실행. 아침 7시 알림 본문은 `daily_quotes` 표에서 안 쓴 멘트부터 무작위로 뽑습니다 (원본 목록 `supabase/quotes.txt`). 멘트 추가·수정·끄기는 Table Editor에서 바로 할 수 있어요.
 
 ### 반복 일정
 
