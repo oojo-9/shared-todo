@@ -1,6 +1,6 @@
 // 서버 모드 저장소: Supabase Auth + Postgres + Realtime.
 // 보기 권한은 DB의 Row Level Security(supabase/schema.sql)가 막고, 여기서는 조회·수정만 한다.
-import { COLORS, validNickname, validText } from './util.js';
+import { COLORS, validNickname, validText, normTimes } from './util.js';
 
 const SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
@@ -139,9 +139,9 @@ export async function createSupabaseStore(cfg) {
     // 여러 개를 한 번에 (반복 일정)
     async createTodos(list) {
       const userId = uidOrThrow();
-      const rows = list.map(({ date, title, category_id, status = 'todo', sort = Date.now(), series_id = null, repeat = null }) => ({
+      const rows = list.map(({ date, title, category_id, status = 'todo', sort = Date.now(), series_id = null, repeat = null, ...rest }) => ({
         user_id: userId, date, title: validText(title, '할 일', 200),
-        category_id: category_id || null, status, sort, series_id, repeat,
+        category_id: category_id || null, status, sort, series_id, repeat, ...normTimes(rest),
       }));
       ok(await sb.from('todos').insert(rows));
     },
@@ -150,13 +150,14 @@ export async function createSupabaseStore(cfg) {
       const p = {};
       if ('title' in patch) p.title = validText(patch.title, '할 일', 200);
       if ('category_id' in patch) p.category_id = patch.category_id || null;
+      Object.assign(p, normTimes(patch));
       ok(await sb.from('todos').update(p).eq('series_id', seriesId).gte('date', fromDate));
     },
     async deleteSeries(seriesId, fromDate) {
       ok(await sb.from('todos').delete().eq('series_id', seriesId).gte('date', fromDate));
     },
     async updateTodo(id, patch) {
-      const p = { ...patch };
+      const p = { ...patch, ...normTimes(patch) };
       if ('title' in p) p.title = validText(p.title, '할 일', 200);
       if ('category_id' in p) p.category_id = p.category_id || null;
       ok(await sb.from('todos').update(p).eq('id', id));

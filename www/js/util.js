@@ -95,6 +95,32 @@ export function repeatLabel({ freq, days = [], mday = 1 }) {
 }
 
 // ---- 할 일 상태 3단계 ----
+// ---------- 시작·마감 시간과 알림 ----------
+// 시간은 할 일 날짜 기준 'HH:MM', 알림은 몇 분 전에 울릴지 (null = 알림 없음)
+export const TIME_KEYS = ['start_time', 'due_time', 'start_alert', 'due_alert'];
+export const ALERT_OPTIONS = [[0, '정각'], [5, '5분 전'], [10, '10분 전'], [30, '30분 전'], [60, '1시간 전'], [180, '3시간 전'], [1440, '하루 전']];
+export const alertLabel = (m) => (ALERT_OPTIONS.find(([v]) => v === m) || [m, `${m}분 전`])[1];
+export const hhmm = (v) => (/^\d{2}:\d{2}/.test(v || '') ? v.slice(0, 5) : null);
+const alertMin = (v) => (v === '' || v == null || !ALERT_OPTIONS.some(([m]) => m === Number(v)) ? null : Number(v));
+// patch에 들어 있는 시간 항목만 저장용 값으로 바꾼다. 시간이 없으면 그 알림도 끈다.
+export function normTimes(patch) {
+  const out = {};
+  for (const [time, alert] of [['start_time', 'start_alert'], ['due_time', 'due_alert']]) {
+    if (time in patch) out[time] = hhmm(patch[time]);
+    if (alert in patch) out[alert] = (time in patch && !out[time]) ? null : alertMin(patch[alert]);
+  }
+  return out;
+}
+// 목록 정렬: 시간 있는 일을 시간 순으로 위에
+export const timeKey = (t) => hhmm(t.start_time) || hhmm(t.due_time) || '99:99';
+export const isOverdue = (t, now = new Date()) => {
+  const due = hhmm(t.due_time);
+  if (!due || t.status === 'done') return false;
+  const [y, mo, d] = t.date.split('-').map(Number);
+  const [hh, mm] = due.split(':').map(Number);
+  return new Date(y, mo - 1, d, hh, mm) < now;
+};
+
 export const STATUS = ['todo', 'doing', 'done'];
 export const STATUS_LABEL = { todo: '할 일 전', doing: '진행중', done: '완료' };
 export const nextStatus = (s) => STATUS[(STATUS.indexOf(s) + 1) % STATUS.length];

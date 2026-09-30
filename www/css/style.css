@@ -484,3 +484,22 @@ html:has(#app.shell), body:has(#app.shell) { height: 100%; overflow: hidden; }
 }
 #app.shell.fill .main { overflow: hidden; padding-bottom: 10px; }
 #app.shell .bottom-nav { position: relative; left: auto; transform: none; flex: none; }
+
+/* ---------- 시작·마감 시간과 알림 ---------- */
+.time-tag { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+.time-tag.overdue { color: var(--danger); font-weight: 700; }
+.time-fields { gap: 8px; }
+.time-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.time-row { display: flex; align-items: center; gap: 8px; }
+.time-lab { flex: none; width: 34px; font-weight: 700; font-size: 14px; }
+.time-row input[type=time] {
+  flex: 1; min-width: 0; height: 42px;
+  -webkit-appearance: none; appearance: none; display: block; text-align: left; background: var(--surface);
+}
+input[type=time]::-webkit-date-and-time-value { text-align: left; margin: 0; }
+.time-clear { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px; background: none; color: var(--muted); }
+.time-clear .ico { width: 16px; height: 16px; }
+.alert-row { display: flex; align-items: center; gap: 8px; min-height: 40px; padding-left: 42px; }
+.alert-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.alert-check input { width: 20px; height: 20px; margin: 0; accent-color: var(--me); }
+.alert-row select { flex: 1; min-width: 0; width: auto; min-height: 38px; padding: 4px 10px; }

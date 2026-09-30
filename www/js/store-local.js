@@ -3,7 +3,7 @@
 // Supabase 저장소(store-supabase.js)와 같은 메서드를 제공하고, 공개 범위 규칙도 RLS와 똑같이 적용한다.
 import {
   uid, genCode, today, addDays, nextStatus, COLORS, ls, ss,
-  validNickname, validText, STATUS,
+  validNickname, validText, STATUS, normTimes,
 } from './util.js';
 
 const DB_KEY = 'shtodo.db.v1';
@@ -192,11 +192,12 @@ export function createLocalStore() {
     // 여러 개를 한 번에 (반복 일정)
     async createTodos(list) {
       const me = need();
-      for (const { date, title, category_id, status = 'todo', sort = Date.now(), series_id = null, repeat = null } of list) {
+      for (const { date, title, category_id, status = 'todo', sort = Date.now(), series_id = null, repeat = null, ...rest } of list) {
         const cat = category_id && db.categories.some((c) => c.id === category_id && c.user_id === me.id) ? category_id : null;
         db.todos.push({
           id: uid(), user_id: me.id, category_id: cat, date, title: validText(title, '할 일', 200),
           status: STATUS.includes(status) ? status : 'todo', sort, series_id, repeat, created_at: now(), updated_at: now(),
+          start_time: null, due_time: null, start_alert: null, due_alert: null, ...normTimes(rest),
         });
       }
       commit();
@@ -207,6 +208,7 @@ export function createLocalStore() {
       db.todos.filter((t) => t.series_id === seriesId && t.user_id === sessionId && t.date >= fromDate).forEach((t) => {
         if ('title' in patch) t.title = validText(patch.title, '할 일', 200);
         if ('category_id' in patch) t.category_id = patch.category_id || null;
+        Object.assign(t, normTimes(patch));
         t.updated_at = now();
       });
       commit();
@@ -225,6 +227,7 @@ export function createLocalStore() {
         t.category_id = patch.category_id && db.categories.some((c) => c.id === patch.category_id && c.user_id === sessionId)
           ? patch.category_id : null;
       }
+      Object.assign(t, normTimes(patch));
       t.updated_at = now();
       commit();
     },

@@ -3,6 +3,7 @@ import {
   h, icon, ymd, parseYmd, addDays, startOfWeek, today, WEEK, weekdayOf,
   STATUS, STATUS_LABEL, nextStatus, COLORS, toast, prefGet, prefSet, b64urlToBytes,
   expandRepeat, repeatLabel, REPEAT_MAX_DAYS, uid,
+  ALERT_OPTIONS, alertLabel, hhmm, timeKey, isOverdue,
 } from './util.js';
 import { createLocalStore } from './store-local.js';
 import { holidayOf } from './holidays.js';
@@ -121,7 +122,9 @@ async function act(fn) {
   await reload();
 }
 
-const todosOf = (userId) => (state.todos.get(userId) || []).filter((t) => t.date === state.selected);
+// 시간이 있는 일은 시간 순으로 위에, 나머지는 원래 순서대로
+const todosOf = (userId) => (state.todos.get(userId) || []).filter((t) => t.date === state.selected)
+  .sort((a, b) => (timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
 const catMapOf = (userId) => new Map((state.cats.get(userId) || []).map((c) => [c.id, c]));
 
 // 토요일은 파랑, 일요일·공휴일은 빨강
@@ -371,7 +374,11 @@ function todoRow(t, { editable, cats, deletable = false }) {
       onkeydown: editable ? (e) => { if (e.key === 'Enter') openTodo(t); } : null,
     },
     h('div', { class: 'todo-title' }, t.title),
-    (c || t.status === 'doing' || t.series_id) ? h('div', { class: 'todo-meta' },
+    (c || t.status === 'doing' || t.series_id || hhmm(t.start_time) || hhmm(t.due_time)) ? h('div', { class: 'todo-meta' },
+      hhmm(t.start_time) ? h('span', { class: 'time-tag', title: editable && t.start_alert != null ? `시작 알림: ${alertLabel(t.start_alert)}` : '시작 시간' },
+        `🕑 ${hhmm(t.start_time)}${editable && t.start_alert != null ? ' 🔔' : ''}`) : null,
+      hhmm(t.due_time) ? h('span', { class: `time-tag${isOverdue(t) ? ' overdue' : ''}`, title: editable && t.due_alert != null ? `마감 알림: ${alertLabel(t.due_alert)}` : '마감 시간' },
+        `마감 ${hhmm(t.due_time)}${editable && t.due_alert != null ? ' 🔔' : ''}`) : null,
       t.series_id ? h('span', { class: 'rep-tag', title: t.repeat || '반복 일정' }, '🔁') : null,
       c ? h('span', { class: 'cat-tag' }, h('i', { class: 'cat-dot' }), c.name) : null,
       t.status === 'doing' ? h('span', { class: 'doing-tag' }, '진행중') : null) : null),
@@ -393,6 +400,7 @@ function deleteTodo(t) {
       onClick: () => act(() => store.createTodo({
         date: t.date, title: t.title, category_id: t.category_id, status: t.status, sort: t.sort,
         series_id: t.series_id ?? null, repeat: t.repeat ?? null,
+        start_time: t.start_time ?? null, due_time: t.due_time ?? null, start_alert: t.start_alert ?? null, due_alert: t.due_alert ?? null,
       })),
     });
   });
@@ -561,7 +569,11 @@ async function openMonth() {
 }
 
 function openTodo(t) {
-  Object.assign(state.drafts, { 'e-title': t.title, 'e-date': t.date, 'e-cat': t.category_id || '', 'e-status': t.status, 'e-scope': 'one' });
+  Object.assign(state.drafts, {
+    'e-title': t.title, 'e-date': t.date, 'e-cat': t.category_id || '', 'e-status': t.status, 'e-scope': 'one',
+    'e-start': hhmm(t.start_time) || '', 'e-due': hhmm(t.due_time) || '',
+    'e-sa': t.start_alert ?? '', 'e-da': t.due_alert ?? '',
+  });
   openSheet('todo', { id: t.id });
 }
 
@@ -680,14 +692,17 @@ function todoSheet(s) {
   const scopeAll = series && state.drafts['e-scope'] === 'all';
   const save = (e) => {
     e?.preventDefault();
+    const times = timeValues('e');
+    const problem = timeProblem(times);
+    if (problem) { toast(problem); return; }
     const patch = {
       title: state.drafts['e-title'], date: state.drafts['e-date'] || state.selected,
-      category_id: state.drafts['e-cat'] || null, status,
+      category_id: state.drafts['e-cat'] || null, status, ...times,
     };
     state.sheet = null;
     act(async () => {
-      // 제목·카테고리는 이 날부터 반복 전체에, 날짜·상태는 이 일정에만
-      if (scopeAll) await store.updateSeries(series.id, series.from, { title: patch.title, category_id: patch.category_id });
+      // 제목·카테고리·시간은 이 날부터 반복 전체에, 날짜·상태는 이 일정에만
+      if (scopeAll) await store.updateSeries(series.id, series.from, { title: patch.title, category_id: patch.category_id, ...times });
       await store.updateTodo(s.id, patch);
       return scopeAll ? '이 날부터 반복 일정을 모두 바꿨어요' : undefined;
     });
@@ -712,7 +727,7 @@ function todoSheet(s) {
             class: `seg${(state.drafts['e-scope'] || 'one') === v ? ' active' : ''}`,
             onclick: () => { state.drafts['e-scope'] = v; render(); },
           }, label))),
-        scopeAll ? h('p', { class: 'hint' }, '제목·카테고리 수정과 삭제가 이 날 이후의 반복 일정 전체에 적용돼요.') : null) : null,
+        scopeAll ? h('p', { class: 'hint' }, '제목·카테고리·시간 수정과 삭제가 이 날 이후의 반복 일정 전체에 적용돼요.') : null) : null,
       h('label', { class: 'field' }, h('span', null, '제목'), draftInput('e-title', { maxlength: 200, required: true })),
       h('div', { class: 'field' }, h('span', null, '상태'),
         h('div', { class: 'segmented', role: 'radiogroup' }, STATUS.map((st) => h('button', {
@@ -729,6 +744,7 @@ function todoSheet(s) {
               state.drafts['e-cat'] = e.target.value;
             },
           }, categoryOptions(cats)))),
+      timeFields('e'),
       h('div', { class: 'row gap end' },
         h('button', {
           class: 'btn btn-danger-ghost', type: 'button',
@@ -737,6 +753,64 @@ function todoSheet(s) {
         h('span', { class: 'grow' }),
         h('button', { class: 'btn btn-primary', type: 'submit' }, '저장'))),
   };
+}
+
+// ---------- 시작·마감 시간과 알림 ----------
+// 초안 키: 할 일 수정은 e-start / e-due / e-sa / e-da, 반복 일정은 r-start-t / r-due-t / r-sa / r-da
+const timeDraftKeys = (p) => (p === 'e'
+  ? { start: 'e-start', due: 'e-due', sa: 'e-sa', da: 'e-da' }
+  : { start: 'r-start-t', due: 'r-due-t', sa: 'r-sa', da: 'r-da' });
+const alertIsOn = (v) => v !== '' && v != null;
+
+function timeValues(p) {
+  const k = timeDraftKeys(p);
+  const dr = state.drafts;
+  return { start_time: dr[k.start] || null, due_time: dr[k.due] || null, start_alert: dr[k.sa], due_alert: dr[k.da] };
+}
+
+function timeProblem({ start_time, due_time }) {
+  const s = hhmm(start_time);
+  const d = hhmm(due_time);
+  return s && d && d < s ? '마감 시간이 시작 시간보다 빨라요' : null;
+}
+
+// 시작/마감 시간 칸. 시간을 넣으면 그 아래에 알림 체크와 알림 시점이 나온다.
+function timeFields(p) {
+  const k = timeDraftKeys(p);
+  const dr = state.drafts;
+  // 알림을 켤 때 기본값: 시작은 정각, 마감은 1시간 전
+  const item = (label, tk, ak, defaultAlert) => {
+    const time = dr[tk] || '';
+    const on = alertIsOn(dr[ak]);
+    return h('div', { class: 'time-item' },
+      h('div', { class: 'time-row' },
+        h('span', { class: 'time-lab' }, label),
+        h('input', {
+          type: 'time', 'data-key': tk, value: time, 'aria-label': `${label} 시간`,
+          oninput: (e) => { dr[tk] = e.target.value; },
+          onchange: (e) => { dr[tk] = e.target.value; if (!e.target.value) dr[ak] = ''; render(); },
+        }),
+        time ? h('button', {
+          class: 'time-clear', type: 'button', 'aria-label': `${label} 시간 지우기`, title: '지우기',
+          onclick: () => { dr[tk] = ''; dr[ak] = ''; render(); },
+        }, icon('x')) : null),
+      time ? h('div', { class: 'alert-row' },
+        h('label', { class: 'alert-check' },
+          h('input', { type: 'checkbox', checked: on, onchange: (e) => { dr[ak] = e.target.checked ? defaultAlert : ''; render(); } }),
+          `${label} 알림`),
+        on ? h('select', {
+          'aria-label': `${label} 알림 시점`, value: String(dr[ak]),
+          onchange: (e) => { dr[ak] = Number(e.target.value); render(); },
+        }, ALERT_OPTIONS.map(([m, text]) => h('option', { value: String(m) }, text))) : null) : null);
+  };
+  const wantsAlert = (dr[k.start] && alertIsOn(dr[k.sa])) || (dr[k.due] && alertIsOn(dr[k.da]));
+  return h('div', { class: 'field time-fields' },
+    h('span', null, '시간 (선택)'),
+    item('시작', k.start, k.sa, 0),
+    item('마감', k.due, k.da, 60),
+    wantsAlert && !state.pushOn
+      ? h('p', { class: 'hint' }, '이 기기에서 알림을 받으려면 설정(⚙️)에서 푸시 알림을 켜 주세요.')
+      : null);
 }
 
 // ---------- 반복 일정 추가 ----------
@@ -752,6 +826,7 @@ function openRepeat(fromKey) {
     'r-mday': String(d.getDate()),
     'r-start': state.selected,
     'r-end': addDays(state.selected, 29),
+    'r-start-t': '', 'r-due-t': '', 'r-sa': '', 'r-da': '',
   });
   openSheet('repeat', { fromKey });
 }
@@ -775,6 +850,9 @@ function repeatSheet(s) {
     if (problem) { toast(problem); return; }
     const title = (dr['r-title'] || '').trim();
     if (!title) { toast('할 일을 입력해 주세요'); return; }
+    const times = timeValues('r');
+    const timeErr = timeProblem(times);
+    if (timeErr) { toast(timeErr); return; }
     const seriesId = uid();
     const repeat = repeatLabel(rule);
     const base = Date.now();
@@ -782,7 +860,7 @@ function repeatSheet(s) {
     if (s.fromKey) state.drafts[s.fromKey] = '';
     act(async () => {
       await store.createTodos(dates.map((date, i) => ({
-        date, title, category_id: dr['r-cat'] || null, sort: base + i, series_id: seriesId, repeat,
+        date, title, category_id: dr['r-cat'] || null, sort: base + i, series_id: seriesId, repeat, ...times,
       })));
       return `🔁 ${repeat} · ${dates.length}개 일정을 추가했어요`;
     });
@@ -822,6 +900,7 @@ function repeatSheet(s) {
           h('input', { type: 'date', value: dr['r-start'] || '', onchange: (e) => { dr['r-start'] = e.target.value; render(); } })),
         h('label', { class: 'field' }, h('span', null, '종료일'),
           h('input', { type: 'date', value: dr['r-end'] || '', onchange: (e) => { dr['r-end'] = e.target.value; render(); } }))),
+      timeFields('r'),
       h('div', { class: `rep-preview${problem ? ' warn' : ''}` },
         problem || [
           h('b', null, `🔁 ${repeatLabel(rule)} · 총 ${dates.length}개`),
