@@ -292,6 +292,20 @@ export function createLocalStore() {
       const s = db.shares.find((x) => x.owner_id === partnerId && x.viewer_id === me.id);
       if (s) { s.notify = !!enabled; commit(); }
     },
+    // 콕 찌르기: 데모에선 횟수만 센다 (하루 3번)
+    async sendNudge(partnerId) {
+      const me = need();
+      db.nudges ||= [];
+      const used = db.nudges.filter((n) => n.from_id === me.id && n.to_id === partnerId && n.day === today()).length;
+      if (used >= 3) throw new Error('오늘은 3번 모두 보냈어요. 내일 다시 찔러 주세요');
+      db.nudges.push({ from_id: me.id, to_id: partnerId, day: today() });
+      commit();
+      return 3 - used - 1;
+    },
+    async nudgesLeft(partnerId) {
+      const me = need();
+      return Math.max(0, 3 - (db.nudges || []).filter((n) => n.from_id === me.id && n.to_id === partnerId && n.day === today()).length);
+    },
     // 연결 해제(또는 보낸 요청 취소): 언제든 한쪽에서 가능
     async revokeShare(partnerId) {
       const me = need();

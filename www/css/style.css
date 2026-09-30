@@ -503,3 +503,15 @@ input[type=time]::-webkit-date-and-time-value { text-align: left; margin: 0; }
 .alert-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .alert-check input { width: 20px; height: 20px; margin: 0; accent-color: var(--me); }
 .alert-row select { flex: 1; min-width: 0; width: auto; min-height: 38px; padding: 4px 10px; }
+
+/* ---------- 콕 찌르기 🔔 ---------- */
+.pane-head .pane-head-btn { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 70%; padding: 0; border: 0; background: none; font: inherit; color: inherit; }
+.pane-head-btn .pane-name { max-width: none; }
+.nudge-bell {
+  flex: none; display: inline-flex; align-items: center; gap: 1px;
+  padding: 2px 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  font-size: 13px; line-height: 1.2; animation: ring 3.5s ease-in-out infinite; transform-origin: 50% 0;
+}
+.nudge-left { font-size: 10.5px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.nudge-bell.used-up { opacity: .4; filter: grayscale(1); animation: none; }
+@keyframes ring { 0%, 82%, 100% { transform: rotate(0); } 86% { transform: rotate(14deg); } 90% { transform: rotate(-12deg); } 94% { transform: rotate(8deg); } }

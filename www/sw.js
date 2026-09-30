@@ -1,6 +1,6 @@
 // 앱 화면 파일을 캐시해 오프라인에서도 열리게 한다.
 // 네트워크 우선: 새 버전이 있으면 바로 받고, 연결이 없을 때만 캐시를 쓴다.
-const CACHE = 'shtodo-v13';
+const CACHE = 'shtodo-v14';
 const SHELL = [
   './',
   './index.html',

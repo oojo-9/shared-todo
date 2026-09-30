@@ -24,6 +24,7 @@ const state = {
   drafts: { email: prefGet('email') || '' }, // 입력 중인 값 (실시간 갱신으로 화면을 다시 그려도 유지)
   authMode: 'signin',
   pushOn: false, // 이 기기에서 푸시 알림을 받는 중인지
+  nudgeLeft: new Map(), // '상대id|날짜' -> 오늘 콕 찌르기 남은 횟수
 };
 
 function readPinned() {
@@ -441,20 +442,45 @@ function emptyPartnerPane() {
 function partnerPane(p) {
   const list = todosOf(p.id);
   const canPick = state.conns.partners.length > MAX_PARTNERS;
-  const headInner = [
-    h('span', { class: 'pane-name' }, p.nickname),
-    canPick ? icon('down') : null,
-    h('span', { class: 'pane-count' }, progress(list)),
-  ];
+  const name = h('span', { class: 'pane-name' }, p.nickname);
   return h('div', { class: 'pane pane-partner', style: { '--pc': p.color } },
-    canPick
-      ? h('button', { class: 'pane-head pane-head-btn', type: 'button', onclick: () => openSheet('pick'), 'aria-label': `${p.nickname}, 함께 볼 친구 고르기` }, headInner)
-      : h('div', { class: 'pane-head' }, headInner),
+    h('div', { class: 'pane-head' },
+      canPick
+        ? h('button', { class: 'pane-head-btn', type: 'button', onclick: () => openSheet('pick'), 'aria-label': `${p.nickname}, 함께 볼 친구 고르기` }, name, icon('down'))
+        : name,
+      nudgeBell(p, list),
+      h('span', { class: 'pane-count' }, progress(list))),
     h('div', { class: 'pane-scroll' },
       list.length
         ? h('ul', { class: 'todo-list' }, list.map((t) => todoRow(t, { editable: false, cats: catMapOf(p.id) })))
         : h('p', { class: 'empty-text' }, '공개된 할 일이 없어요')),
     h('div', { class: 'pane-foot' }, h('i', { class: 'live-dot' }), '보기 전용 · 실시간 반영'));
+}
+
+// ---------- 콕 찌르기 🔔 ----------
+// 오늘, 상대가 반복 일정 말고 새로 적은 할 일이 하나도 없으면 이름 옆에 벨이 뜬다.
+// 누르면 상대에게 "오늘의 할 일이 없을 리가 없는데?" 푸시. 한 사람에게 하루 3번까지.
+function nudgeBell(p, list) {
+  if (state.selected !== today() || list.some((t) => !t.series_id)) return null;
+  const key = `${p.id}|${today()}`;
+  if (!state.nudgeLeft.has(key)) {
+    state.nudgeLeft.set(key, null); // 불러오는 중
+    store.nudgesLeft(p.id).then((n) => { state.nudgeLeft.set(key, n); render(); }).catch(() => {}); // 실패하면 숫자 없이 벨만
+  }
+  const left = state.nudgeLeft.get(key);
+  return h('button', {
+    class: `nudge-bell${left === 0 ? ' used-up' : ''}`, type: 'button',
+    'aria-label': `${p.nickname}님 콕 찌르기${left != null ? ` (오늘 ${left}번 남음)` : ''}`,
+    title: left === 0 ? '오늘은 다 보냈어요' : '오늘 할 일 적으라고 콕 찌르기',
+    onclick: () => {
+      if (left === 0) { toast('오늘은 3번 모두 보냈어요. 내일 다시 찔러 주세요'); return; }
+      act(async () => {
+        const n = await store.sendNudge(p.id);
+        state.nudgeLeft.set(key, n);
+        return `🔔 ${p.nickname}님을 콕 찔렀어요 (오늘 ${n}번 남음)`;
+      });
+    },
+  }, '🔔', left != null ? h('span', { class: 'nudge-left' }, left) : null);
 }
 
 function myPane() {

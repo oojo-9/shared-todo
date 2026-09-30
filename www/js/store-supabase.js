@@ -202,6 +202,13 @@ export async function createSupabaseStore(cfg) {
     async setShareNotify(partnerId, enabled) {
       ok(await sb.rpc('set_share_notify', { partner: partnerId, enabled }));
     },
+    // 콕 찌르기: 보내고 오늘 남은 횟수를 돌려준다 (하루 3번, 서버가 막는다)
+    async sendNudge(partnerId) {
+      return ok(await sb.rpc('send_nudge', { partner: partnerId }));
+    },
+    async nudgesLeft(partnerId) {
+      return ok(await sb.rpc('nudges_left', { partner: partnerId }));
+    },
     async savePushSubscription({ endpoint, p256dh, auth }) {
       ok(await sb.rpc('save_push_subscription', { p_endpoint: endpoint, p_p256dh: p256dh, p_auth: auth }));
     },
