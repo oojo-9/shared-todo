@@ -485,7 +485,7 @@ function openNewCategory(ret) {
   openSheet('newcat', { ret });
 }
 
-// 할 일 추가 입력란. catMode: 'inline'(내 목록: 카테고리 | 입력 | +) / 'below'(공유 보기: 입력 | + 아래에 카테고리)
+// 할 일 추가 입력란: 키보드 완료(엔터)는 바로 추가, + 버튼은 시간·알림을 고르는 팝업. catMode: 'inline'(내 목록: 카테고리 | 입력 | +) / 'below'(공유 보기: 입력 | + 아래에 카테고리)
 // 고른 카테고리는 두 화면이 함께 기억한다.
 function addForm(key, catMode) {
   const cats = state.cats.get(state.me.id) || [];
@@ -500,7 +500,10 @@ function addForm(key, catMode) {
     },
   }, categoryOptions(cats));
   const input = draftInput(key, { placeholder: '할 일 추가', maxlength: 200, enterkeyhint: 'done', 'aria-label': '할 일 추가', autocomplete: 'off' });
-  const addBtn = h('button', { class: 'add-btn', type: 'submit', 'aria-label': '추가' }, icon('plus'));
+  const addBtn = h('button', {
+    class: 'add-btn', type: 'button', 'aria-label': '시간·알림 정해서 추가', title: '시간·알림 정해서 추가',
+    onclick: () => openAdd(key, catId),
+  }, icon('plus'));
   const onsubmit = (e) => {
     e.preventDefault();
     const title = (state.drafts[key] || '').trim();
@@ -579,7 +582,7 @@ function openTodo(t) {
 
 function sheetView() {
   const s = state.sheet;
-  const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet, repeat: repeatSheet };
+  const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet, repeat: repeatSheet, add: addSheet };
   const { title, body } = builders[s.type](s);
   return h('div', {
     class: 'sheet-overlay',
@@ -756,10 +759,13 @@ function todoSheet(s) {
 }
 
 // ---------- 시작·마감 시간과 알림 ----------
-// 초안 키: 할 일 수정은 e-start / e-due / e-sa / e-da, 반복 일정은 r-start-t / r-due-t / r-sa / r-da
-const timeDraftKeys = (p) => (p === 'e'
-  ? { start: 'e-start', due: 'e-due', sa: 'e-sa', da: 'e-da' }
-  : { start: 'r-start-t', due: 'r-due-t', sa: 'r-sa', da: 'r-da' });
+// 초안 키: 할 일 수정 e-*, 추가 팝업 a-*, 반복 일정 r-* (r-start/r-end는 반복 기간이라 r-start-t를 쓴다)
+const TIME_DRAFTS = {
+  e: { start: 'e-start', due: 'e-due', sa: 'e-sa', da: 'e-da' },
+  a: { start: 'a-start', due: 'a-due', sa: 'a-sa', da: 'a-da' },
+  r: { start: 'r-start-t', due: 'r-due-t', sa: 'r-sa', da: 'r-da' },
+};
+const timeDraftKeys = (p) => TIME_DRAFTS[p];
 const alertIsOn = (v) => v !== '' && v != null;
 
 function timeValues(p) {
@@ -811,6 +817,54 @@ function timeFields(p) {
     wantsAlert && !state.pushOn
       ? h('p', { class: 'hint' }, '이 기기에서 알림을 받으려면 설정(⚙️)에서 푸시 알림을 켜 주세요.')
       : null);
+}
+
+// ---------- 할 일 추가 팝업 (+ 버튼) ----------
+function openAdd(fromKey, catId) {
+  Object.assign(state.drafts, {
+    'a-title': (state.drafts[fromKey] || '').trim(), 'a-date': state.selected, 'a-cat': catId || '',
+    'a-start': '', 'a-due': '', 'a-sa': '', 'a-da': '',
+  });
+  openSheet('add', { fromKey });
+}
+
+function addSheet(s) {
+  const cats = state.cats.get(state.me.id) || [];
+  const dr = state.drafts;
+  const submit = (e) => {
+    e.preventDefault();
+    const title = (dr['a-title'] || '').trim();
+    if (!title) { toast('할 일을 입력해 주세요'); return; }
+    const times = timeValues('a');
+    const problem = timeProblem(times);
+    if (problem) { toast(problem); return; }
+    state.sheet = null;
+    state.drafts[s.fromKey] = '';
+    act(() => store.createTodo({ date: dr['a-date'] || state.selected, title, category_id: dr['a-cat'] || null, ...times }));
+  };
+  return {
+    title: '할 일 추가',
+    body: h('form', { class: 'stack', onsubmit: submit },
+      h('label', { class: 'field' }, h('span', null, '할 일'),
+        draftInput('a-title', { placeholder: '예: 포트폴리오 초안 완성하기', maxlength: 200, required: true, autocomplete: 'off', enterkeyhint: 'done' })),
+      h('div', { class: 'two-col' },
+        h('label', { class: 'field' }, h('span', null, '날짜'), draftInput('a-date', { type: 'date', required: true })),
+        h('label', { class: 'field' }, h('span', null, '카테고리'),
+          h('select', {
+            value: dr['a-cat'] || '',
+            onchange: (e) => {
+              if (e.target.value === NEW_CAT) { e.target.value = dr['a-cat'] || ''; openNewCategory({ after: 'addsheet', fromKey: s.fromKey }); return; }
+              dr['a-cat'] = e.target.value;
+              prefSet('lastCat', e.target.value || null);
+            },
+          }, categoryOptions(cats)))),
+      timeFields('a'),
+      h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, '추가'),
+      h('button', {
+        class: 'link-btn rep-link', type: 'button',
+        onclick: () => { state.drafts[s.fromKey] = dr['a-title'] || ''; openRepeat(s.fromKey); },
+      }, '🔁 반복 일정으로 추가')),
+  };
 }
 
 // ---------- 반복 일정 추가 ----------
@@ -914,7 +968,8 @@ function newCategorySheet(s) {
   const color = state.drafts['nc-color'];
   const isPublic = state.drafts['nc-public'];
   const back = () => {
-    state.sheet = s.ret.after === 'todo' ? { type: 'todo', id: s.ret.todoId } : null;
+    state.sheet = s.ret.after === 'todo' ? { type: 'todo', id: s.ret.todoId }
+      : s.ret.after === 'addsheet' ? { type: 'add', fromKey: s.ret.fromKey } : null;
     render();
   };
   return {
@@ -928,6 +983,10 @@ function newCategorySheet(s) {
           if (s.ret.after === 'todo') {
             state.drafts['e-cat'] = id;
             state.sheet = { type: 'todo', id: s.ret.todoId };
+          } else if (s.ret.after === 'addsheet') {
+            state.drafts['a-cat'] = id;
+            prefSet('lastCat', id);
+            state.sheet = { type: 'add', fromKey: s.ret.fromKey };
           } else {
             prefSet('lastCat', id);
             state.sheet = null;
