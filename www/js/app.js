@@ -147,9 +147,13 @@ function render() {
   let s1 = null;
   try { s0 = active.selectionStart; s1 = active.selectionEnd; } catch { /* 선택 범위 없는 요소 */ }
   const sheetScroll = root.querySelector('.sheet-body')?.scrollTop;
+  const mainScroll = root.querySelector('.main')?.scrollTop;
 
   root.replaceChildren(...view().filter(Boolean));
   root.classList.toggle('fill', !!root.querySelector('.split-3, .split-4'));
+  root.classList.toggle('shell', !!root.querySelector('.bottom-nav'));
+  const main = root.querySelector('.main');
+  if (main && mainScroll) main.scrollTop = mainScroll;
 
   if (key) {
     const el = root.querySelector(`[data-key="${CSS.escape(key)}"]`);
@@ -538,7 +542,8 @@ function mineView() {
 function bottomNav() {
   const tab = (id, label, ic) => h('button', {
     type: 'button', class: `nav-tab${state.view === id ? ' active' : ''}`, 'aria-current': state.view === id ? 'page' : null,
-    onclick: () => { state.view = id; prefSet('view', id); render(); window.scrollTo(0, 0); },
+    onclick: () => { state.view = id; prefSet('view', id); render();
+      const main = root.querySelector('.main'); if (main) main.scrollTop = 0; window.scrollTo(0, 0); },
   }, icon(ic), h('span', null, label));
   return h('nav', { class: 'bottom-nav' }, tab('share', '공유 보기', 'split'), tab('mine', '내 목록', 'list'));
 }

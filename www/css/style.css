@@ -472,3 +472,15 @@ input[type=date]::-webkit-date-and-time-value { text-align: left; margin: 0; }
 .rep-preview { padding: 10px 12px; border-radius: 12px; background: var(--me-soft); font-size: 13.5px; display: flex; flex-direction: column; gap: 2px; }
 .rep-preview.warn { background: var(--partner-soft); color: var(--danger); font-weight: 600; }
 .btn:disabled { opacity: .45; cursor: default; }
+
+/* ---------- 앱 틀 고정: 화면 전체는 움직이지 않고 본문만 스크롤 ----------
+   아이폰 홈 화면 앱에서 문서 전체를 스크롤하면 position: fixed 탭바가
+   화면 중간으로 밀려 올라가는 문제가 있어, 탭바를 고정 위치 대신 맨 아래 칸으로 둔다. */
+html:has(#app.shell), body:has(#app.shell) { height: 100%; overflow: hidden; }
+#app.shell { height: 100%; min-height: 0; overflow: hidden; }
+#app.shell .main {
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  padding-bottom: 20px;
+}
+#app.shell.fill .main { overflow: hidden; padding-bottom: 10px; }
+#app.shell .bottom-nav { position: relative; left: auto; transform: none; flex: none; }
