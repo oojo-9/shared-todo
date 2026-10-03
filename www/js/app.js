@@ -418,7 +418,10 @@ function cycleStatus(t) {
 
 function progress(list) {
   const done = list.filter((t) => t.status === 'done').length;
-  return list.length ? `${done}/${list.length}` : '';
+  if (!list.length) return '';
+  // 다 끝내기 전에는 반올림으로 100%가 되지 않게 한다
+  const pct = done === list.length ? 100 : Math.min(99, Math.round((done / list.length) * 100));
+  return `${pct}%`;
 }
 
 // ---------- 공유 보기: 친구들 · 나 ----------
@@ -563,7 +566,7 @@ function mineView() {
       h('h2', { class: dayTone(state.selected).trim() || null },
         `${d.getMonth() + 1}월 ${d.getDate()}일 ${weekdayOf(state.selected)}요일`,
         holidayOf(state.selected) ? h('span', { class: 'hol-tag' }, holidayOf(state.selected)) : null),
-      list.length ? h('span', { class: 'mine-progress' }, `${done}/${list.length} 완료`) : null),
+      list.length ? h('span', { class: 'mine-progress' }, `${progress(list)} 완료`) : null),
     list.length ? h('div', { class: 'bar' }, h('div', { class: 'bar-fill', style: { width: `${(done / list.length) * 100}%` } })) : null,
     addForm('add-mine', 'inline'),
     h('button', { class: 'link-btn rep-link', type: 'button', onclick: () => openRepeat('add-mine') }, '🔁 반복 일정 추가'),
