@@ -15,7 +15,7 @@ const state = {
   ready: false,
   me: null,
   view: ['mine', 'stats'].includes(prefGet('view')) ? prefGet('view') : 'share', // 화면은 세 개: 공유 보기, 내 목록, 통계
-  stats: { rep: today().slice(0, 8) + '01', all: today().slice(0, 8) + '01', tab: 'wd', head: null, repList: null, allList: null, day: 'this', pickFrom: today(), pickTo: today(), dayList: null }, // 통계: 반복·전체 각각 고른 달, 요일별/항목별 탭, 날짜별(이번 주/저번 주/고른 기간), 불러온 할 일
+  stats: { rep: today().slice(0, 8) + '01', all: today().slice(0, 8) + '01', tab: 'wd', head: null, repList: null, allList: null, allChart: false, day: 'this', pickFrom: today(), pickTo: today(), dayList: null }, // 통계: 반복·전체 각각 고른 달, 요일별/항목별 탭, 날짜별(이번 주/저번 주/고른 기간), 불러온 할 일
   selected: today(),
   pinned: readPinned(), // 친구가 3명보다 많을 때 공유 보기에 띄울 친구 id
   conns: { partners: [], incoming: [], outgoing: [] },
@@ -651,10 +651,15 @@ function statsView() {
     series.set(x.series_id, g);
   }
   const items = [...series.values()];
-  const byWd = WEEK.map((w, i) => {
-    const l = reps.filter((x) => (parseYmd(x.date).getDay() + 6) % 7 === i);
-    return { w, total: l.length, done: doneCount(l) };
-  });
+  // 요일별 달성률 막대그래프
+  const wdChart = (list) => h('div', { class: 'chart-cols' }, WEEK.map((w, i) => {
+    const l = list.filter((x) => (parseYmd(x.date).getDay() + 6) % 7 === i);
+    const pct = l.length ? pctOf(doneCount(l), l.length) : null;
+    return h('div', { class: 'chart-col' },
+      h('div', { class: 'chart-track', title: pct == null ? null : `${pct}%` }, pct == null ? null : h('i', { style: { height: `${Math.max(2, pct)}%` } })),
+      h('span', { class: 'chart-lab' }, w),
+      h('span', { class: 'chart-pct' }, pct == null ? '–' : `${pct}%`));
+  }));
 
   const rateRow = (label, l) => h('div', { class: 'stats-rate' },
     h('span', null, label), h('b', null, l.length ? progress(l) : '–'),
@@ -675,6 +680,7 @@ function statsView() {
       .sort((a, b) => (timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
     if (l.length) days.push({ d, l });
   }
+  const dayAll = days.flatMap((x) => x.l);
   const dayBtn = (id, label) => h('button', {
     type: 'button', class: `seg${st.day === id ? ' active' : ''}`, onclick: () => { st.day = id; reload(); },
   }, label);
@@ -705,28 +711,37 @@ function statsView() {
           h('span', { class: 'stats-rep' }, '🔁'),
           h('span', { class: 'stats-name' }, g.title,
             h('small', null, `${g.total}일 중 ${g.done}일 · ${pctOf(g.done, g.total)}%`)))))),
-      h('div', { class: 'stats-half' },
+      h('div', { class: 'stats-half stats-chart-half' },
         h('div', { class: 'segmented two stats-tabs' }, tabBtn('wd', '요일별'), tabBtn('item', '항목별')),
         st.tab === 'wd'
-          ? h('div', { class: 'chart-cols' }, byWd.map((b) => h('div', { class: 'chart-col' },
-            h('div', { class: 'chart-track', title: b.total ? `${pctOf(b.done, b.total)}%` : null }, b.total ? h('i', { style: { height: `${Math.max(2, pctOf(b.done, b.total))}%` } }) : null),
-            h('span', { class: 'chart-lab' }, b.w),
-            h('span', { class: 'chart-pct' }, b.total ? `${pctOf(b.done, b.total)}%` : '–'))))
+          ? wdChart(reps)
           : h('div', { class: 'chart-rows' }, items.map((g) => h('div', { class: 'chart-row' },
             h('div', { class: 'chart-row-head' }, h('span', null, g.title), h('b', null, `${pctOf(g.done, g.total)}%`)),
             h('div', { class: 'bar' }, h('div', { class: 'bar-fill', style: { width: `${pctOf(g.done, g.total)}%` } })))))))
       : h('p', { class: 'stats-card stats-empty' }, '이 달에는 반복 일정이 없어요'),
 
-    h('h3', { class: 'stats-title' }, statsMonthSelect('all'), '전체 To-Do', h('small', null, '반복 제외')),
+    h('h3', { class: 'stats-title' }, statsMonthSelect('all'), '전체 To-Do', h('small', null, '반복 제외'),
+      h('button', {
+        class: `stats-chart-btn${st.allChart ? ' active' : ''}`, type: 'button', 'aria-pressed': String(st.allChart),
+        'aria-label': st.allChart ? '미달성 목록 보기' : '요일별 그래프 보기', title: st.allChart ? '미달성 목록 보기' : '요일별 그래프 보기',
+        onclick: () => { st.allChart = !st.allChart; render(); },
+      }, icon('chart'))),
     ones.length ? h('div', { class: 'stats-card stats-split' },
       half('달성', done, '아직 없어요'),
-      half('미달성', undone, '모두 달성했어요 🎉'))
+      st.allChart
+        ? h('div', { class: 'stats-half stats-chart-half' },
+          h('div', { class: 'stats-half-head' }, '요일별 달성률', h('b', null, progress(ones))),
+          wdChart(ones))
+        : half('미달성', undone, '모두 달성했어요 🎉'))
       : h('p', { class: 'stats-card stats-empty' }, '이 달에 오늘까지 적은 할 일이 없어요'),
     h('h3', { class: 'stats-title' }, '날짜별 To-Do',
       h('small', null, dFrom === dTo ? md(dFrom) : `${md(dFrom)} ~ ${md(dTo)}`)),
     h('div', { class: 'segmented stats-tabs' }, dayBtn('this', '이번 주'), dayBtn('last', '저번 주'), dayBtn('pick', '날짜 선택')),
     st.day === 'pick' ? h('div', { class: 'stats-range' },
       pickInput('pickFrom', '시작일'), h('span', null, '~'), pickInput('pickTo', '종료일')) : null,
+    dayAll.length ? h('p', { class: 'stats-day-sum' },
+      '달성률 ', h('b', null, progress(dayAll)),
+      h('span', null, ` (반복 To-Do ${progress(dayAll.filter((x) => x.series_id)) || '–'}, 그 외 ${progress(dayAll.filter((x) => !x.series_id)) || '–'})`)) : null,
     days.some((x) => x.l.length) ? days.map(({ d, l }) => h('div', { class: 'stats-card stats-day' },
       h('div', { class: 'stats-day-head' },
         h('b', { class: dayTone(d).trim() || null }, `${md(d)} (${weekdayOf(d)})`),
