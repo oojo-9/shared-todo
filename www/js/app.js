@@ -15,7 +15,7 @@ const state = {
   ready: false,
   me: null,
   view: ['mine', 'stats'].includes(prefGet('view')) ? prefGet('view') : 'share', // 화면은 세 개: 공유 보기, 내 목록, 통계
-  stats: { rep: today().slice(0, 8) + '01', all: today().slice(0, 8) + '01', tab: 'wd', head: null, repList: null, allList: null }, // 통계: 반복·전체 각각 고른 달, 요일별/항목별 탭, 불러온 할 일
+  stats: { rep: today().slice(0, 8) + '01', all: today().slice(0, 8) + '01', tab: 'wd', head: null, repList: null, allList: null, day: 'this', pickFrom: today(), pickTo: today(), dayList: null }, // 통계: 반복·전체 각각 고른 달, 요일별/항목별 탭, 날짜별(이번 주/저번 주/고른 기간), 불러온 할 일
   selected: today(),
   pinned: readPinned(), // 친구가 3명보다 많을 때 공유 보기에 띄울 친구 id
   conns: { partners: [], incoming: [], outgoing: [] },
@@ -114,11 +114,13 @@ async function loadStats() {
   const monthOf = (first) => store.listTodos(state.me.id, first, monthEnd(first));
   const wEnd = addDays(wStart, 6);
   const mEnd = monthEnd(mStart);
-  const [head, repList, allList] = await Promise.all([
+  const [head, repList, allList, dayList] = await Promise.all([
     store.listTodos(state.me.id, wStart < mStart ? wStart : mStart, wEnd > mEnd ? wEnd : mEnd),
     monthOf(st.rep),
     st.all === st.rep ? null : monthOf(st.all),
+    store.listTodos(state.me.id, ...statsDayRange()),
   ]);
+  st.dayList = dayList;
   st.head = head;
   st.repList = repList;
   st.allList = allList || repList;
@@ -602,6 +604,18 @@ function mineView() {
 
 // ---------- 통계 ----------
 // 위쪽 달성률(반복 + 그 외 전부)과 반복 To-Do는 그 주·그 달 끝까지 전부 세고, 전체 To-Do 목록만 오늘까지 보여 준다 (진행중은 미완료)
+// 날짜별 To-Do가 보여 줄 기간: 이번 주 / 저번 주(월~일) / 고른 기간 (최대 1년)
+function statsDayRange() {
+  const st = state.stats;
+  if (st.day === 'pick') {
+    const [a, b] = st.pickFrom <= st.pickTo ? [st.pickFrom, st.pickTo] : [st.pickTo, st.pickFrom];
+    const max = addDays(a, REPEAT_MAX_DAYS - 1);
+    return [a, b > max ? max : b];
+  }
+  const from = addDays(startOfWeek(today()), st.day === 'last' ? -7 : 0);
+  return [from, addDays(from, 6)];
+}
+
 function statsMonthSelect(key) {
   const st = state.stats;
   const now = new Date();
@@ -618,7 +632,7 @@ function statsMonthSelect(key) {
 
 function statsView() {
   const st = state.stats;
-  if (!st.head || !st.repList || !st.allList) return h('section', { class: 'stats' }, h('p', { class: 'empty-text big' }, '불러오는 중…'));
+  if (!st.head || !st.repList || !st.allList || !st.dayList) return h('section', { class: 'stats' }, h('p', { class: 'empty-text big' }, '불러오는 중…'));
   const t = today();
   const wStart = startOfWeek(t);
   const mStart = t.slice(0, 8) + '01';
@@ -653,6 +667,25 @@ function statsView() {
     h('span', { class: 'stats-name' }, x.title, h('small', null, md(x.date))));
   const done = ones.filter((x) => x.status === 'done');
   const undone = ones.filter((x) => x.status !== 'done');
+  // 날짜별: 기간 안의 모든 할 일(반복 포함)을 날짜마다 묶는다
+  const [dFrom, dTo] = statsDayRange();
+  const days = [];
+  for (let d = dFrom; d <= dTo; d = addDays(d, 1)) {
+    const l = st.dayList.filter((x) => x.date === d)
+      .sort((a, b) => (timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
+    if (l.length) days.push({ d, l });
+  }
+  const dayBtn = (id, label) => h('button', {
+    type: 'button', class: `seg${st.day === id ? ' active' : ''}`, onclick: () => { st.day = id; reload(); },
+  }, label);
+  const pickInput = (key, label) => h('input', {
+    class: 'stats-date', type: 'date', 'aria-label': label, value: st[key],
+    onchange: (e) => { if (e.target.value) { st[key] = e.target.value; reload(); } },
+  });
+  const dayRow = (x) => h('li', { class: x.status === 'done' ? 'is-done' : null },
+    h('span', { class: 'stats-mark' }, x.status === 'done' ? '✓' : ''),
+    h('span', { class: 'stats-name' }, x.title, x.series_id ? h('span', { class: 'stats-rep' }, ' 🔁') : null,
+      x.status === 'doing' ? h('span', { class: 'doing-tag' }, ' 진행중') : null));
   const half = (title, l, empty) => h('div', { class: 'stats-half' },
     h('div', { class: 'stats-half-head' }, title, h('b', null, l.length)),
     l.length ? h('ul', { class: 'stats-list' }, l.map(oneRow)) : h('p', { class: 'stats-empty' }, empty));
@@ -689,6 +722,18 @@ function statsView() {
       half('달성', done, '아직 없어요'),
       half('미달성', undone, '모두 달성했어요 🎉'))
       : h('p', { class: 'stats-card stats-empty' }, '이 달에 오늘까지 적은 할 일이 없어요'),
+    h('h3', { class: 'stats-title' }, '날짜별 To-Do',
+      h('small', null, dFrom === dTo ? md(dFrom) : `${md(dFrom)} ~ ${md(dTo)}`)),
+    h('div', { class: 'segmented stats-tabs' }, dayBtn('this', '이번 주'), dayBtn('last', '저번 주'), dayBtn('pick', '날짜 선택')),
+    st.day === 'pick' ? h('div', { class: 'stats-range' },
+      pickInput('pickFrom', '시작일'), h('span', null, '~'), pickInput('pickTo', '종료일')) : null,
+    days.some((x) => x.l.length) ? days.map(({ d, l }) => h('div', { class: 'stats-card stats-day' },
+      h('div', { class: 'stats-day-head' },
+        h('b', { class: dayTone(d).trim() || null }, `${md(d)} (${weekdayOf(d)})`),
+        d === t ? h('span', { class: 'stats-today' }, '오늘') : null,
+        h('span', { class: 'stats-day-rate' }, `${progress(l)} · ${doneCount(l)}/${l.length}`)),
+      h('ul', { class: 'stats-list' }, l.map(dayRow))))
+      : h('p', { class: 'stats-card stats-empty' }, st.day === 'pick' ? '이 기간에는 할 일이 없어요' : '이 주에는 할 일이 없어요'),
     h('p', { class: 'hint center' }, '달성률은 그 주·그 달 끝까지의 할 일 전체(반복 포함) 기준이에요.'));
 }
 
