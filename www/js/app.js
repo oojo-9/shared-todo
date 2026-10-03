@@ -14,7 +14,8 @@ let store;
 const state = {
   ready: false,
   me: null,
-  view: prefGet('view') === 'mine' ? 'mine' : 'share', // 화면은 두 개: 공유 보기, 내 목록
+  view: ['mine', 'stats'].includes(prefGet('view')) ? prefGet('view') : 'share', // 화면은 세 개: 공유 보기, 내 목록, 통계
+  stats: { rep: today().slice(0, 8) + '01', all: today().slice(0, 8) + '01', tab: 'wd', head: null, repList: null, allList: null }, // 통계: 반복·전체 각각 고른 달, 요일별/항목별 탭, 불러온 할 일
   selected: today(),
   pinned: readPinned(), // 친구가 3명보다 많을 때 공유 보기에 띄울 친구 id
   conns: { partners: [], incoming: [], outgoing: [] },
@@ -92,6 +93,7 @@ async function reload() {
       state.todos.clear();
       ids.forEach((id, i) => { state.cats.set(id, res[i][0]); state.todos.set(id, res[i][1]); });
       if (state.sheet?.type === 'month') await loadMonth();
+      if (state.view === 'stats') await loadStats();
       if (my !== seq) return;
     }
   } catch (e) {
@@ -100,6 +102,26 @@ async function reload() {
   }
   state.ready = true;
   render();
+}
+
+// 통계: 이번 주·이번 달(위쪽 달성률)과 반복·전체 칸에서 각각 고른 달의 내 할 일
+async function loadStats() {
+  const st = state.stats;
+  const t = today();
+  const mStart = t.slice(0, 8) + '01';
+  const wStart = startOfWeek(t);
+  const monthEnd = (first) => { const d = parseYmd(first); return ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)); };
+  const monthOf = (first) => store.listTodos(state.me.id, first, monthEnd(first));
+  const wEnd = addDays(wStart, 6);
+  const mEnd = monthEnd(mStart);
+  const [head, repList, allList] = await Promise.all([
+    store.listTodos(state.me.id, wStart < mStart ? wStart : mStart, wEnd > mEnd ? wEnd : mEnd),
+    monthOf(st.rep),
+    st.all === st.rep ? null : monthOf(st.all),
+  ]);
+  st.head = head;
+  st.repList = repList;
+  st.allList = allList || repList;
 }
 
 async function loadMonth() {
@@ -176,11 +198,11 @@ function view() {
   if (state.me.needsProfile) return [profileView()];
   return [
     topBar(),
-    weekStrip(),
+    state.view === 'stats' ? null : weekStrip(),
     h('main', { class: 'main' },
-      weekHolidays(),
+      state.view === 'stats' ? null : weekHolidays(),
       requestBanner(),
-      state.view === 'share' ? shareView() : mineView()),
+      state.view === 'share' ? shareView() : state.view === 'stats' ? statsView() : mineView()),
     bottomNav(),
     state.sheet ? sheetView() : null,
   ];
@@ -269,7 +291,7 @@ function profileView() {
 function topBar() {
   const d = parseYmd(state.selected);
   return h('header', { class: 'topbar' },
-    h('button', {
+    state.view === 'stats' ? h('h1', { class: 'top-title' }, 'To-Do 리포트') : h('button', {
       class: 'month-btn', type: 'button', 'aria-label': '달력 열기',
       onclick: () => openMonth(),
     }, `${d.getFullYear()}년 ${d.getMonth() + 1}월`, icon('down')),
@@ -416,12 +438,11 @@ function cycleStatus(t) {
   act(() => store.updateTodo(t.id, { status }));
 }
 
+// 다 끝내기 전에는 반올림으로 100%가 되지 않게 한다
+const pctOf = (done, total) => (done === total ? 100 : Math.min(99, Math.round((done / total) * 100)));
+const doneCount = (list) => list.filter((t) => t.status === 'done').length;
 function progress(list) {
-  const done = list.filter((t) => t.status === 'done').length;
-  if (!list.length) return '';
-  // 다 끝내기 전에는 반올림으로 100%가 되지 않게 한다
-  const pct = done === list.length ? 100 : Math.min(99, Math.round((done / list.length) * 100));
-  return `${pct}%`;
+  return list.length ? `${pctOf(doneCount(list), list.length)}%` : '';
 }
 
 // ---------- 공유 보기: 친구들 · 나 ----------
@@ -579,13 +600,106 @@ function mineView() {
     h('p', { class: 'hint center' }, '체크박스를 누를 때마다 할 일 전 → 진행중 → 완료 순으로 바뀌어요.'));
 }
 
+// ---------- 통계 ----------
+// 위쪽 달성률(반복 + 그 외 전부)과 반복 To-Do는 그 주·그 달 끝까지 전부 세고, 전체 To-Do 목록만 오늘까지 보여 준다 (진행중은 미완료)
+function statsMonthSelect(key) {
+  const st = state.stats;
+  const now = new Date();
+  const opts = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const label = d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}월` : `${String(d.getFullYear()).slice(2)}년 ${d.getMonth() + 1}월`;
+    return h('option', { value: ymd(d) }, label);
+  });
+  return h('select', {
+    class: 'stats-month', 'aria-label': '통계를 볼 달', value: st[key],
+    onchange: (e) => { st[key] = e.target.value; reload(); },
+  }, opts);
+}
+
+function statsView() {
+  const st = state.stats;
+  if (!st.head || !st.repList || !st.allList) return h('section', { class: 'stats' }, h('p', { class: 'empty-text big' }, '불러오는 중…'));
+  const t = today();
+  const wStart = startOfWeek(t);
+  const mStart = t.slice(0, 8) + '01';
+  const week = st.head.filter((x) => x.date >= wStart && x.date <= addDays(wStart, 6));
+  const month = st.head.filter((x) => x.date.slice(0, 7) === t.slice(0, 7));
+  const reps = st.repList.filter((x) => x.series_id);
+  const ones = st.allList.filter((x) => x.date <= t && !x.series_id).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  // 반복 일정 묶음별: 그 달 며칠 중 며칠 달성
+  const series = new Map();
+  for (const x of reps) {
+    const g = series.get(x.series_id) || { total: 0, done: 0 };
+    g.total++;
+    if (x.status === 'done') g.done++;
+    if (!g.last || x.date >= g.last) { g.last = x.date; g.title = x.title; g.label = x.repeat; }
+    series.set(x.series_id, g);
+  }
+  const items = [...series.values()];
+  const byWd = WEEK.map((w, i) => {
+    const l = reps.filter((x) => (parseYmd(x.date).getDay() + 6) % 7 === i);
+    return { w, total: l.length, done: doneCount(l) };
+  });
+
+  const rateRow = (label, l) => h('div', { class: 'stats-rate' },
+    h('span', null, label), h('b', null, l.length ? progress(l) : '–'),
+    l.length ? h('small', null, `${doneCount(l)}/${l.length}`) : null);
+  const tabBtn = (id, label) => h('button', {
+    type: 'button', class: `seg${st.tab === id ? ' active' : ''}`, onclick: () => { st.tab = id; render(); },
+  }, label);
+  const oneRow = (x) => h('li', { class: x.status === 'done' ? 'is-done' : null },
+    h('span', { class: 'stats-mark' }, x.status === 'done' ? '✓' : ''),
+    h('span', { class: 'stats-name' }, x.title, h('small', null, md(x.date))));
+  const done = ones.filter((x) => x.status === 'done');
+  const undone = ones.filter((x) => x.status !== 'done');
+  const half = (title, l, empty) => h('div', { class: 'stats-half' },
+    h('div', { class: 'stats-half-head' }, title, h('b', null, l.length)),
+    l.length ? h('ul', { class: 'stats-list' }, l.map(oneRow)) : h('p', { class: 'stats-empty' }, empty));
+
+  return h('section', { class: 'stats' },
+    h('div', { class: 'stats-profile' },
+      h('button', { class: 'stats-avatar', type: 'button', 'aria-label': '프로필 사진', onclick: () => toast('추후 오픈 예정이에요') }, icon('user')),
+      h('div', { class: 'stats-me' },
+        h('strong', null, state.me.nickname),
+        rateRow('이번 주 달성률', week),
+        rateRow('이번 달 달성률', month))),
+
+    h('h3', { class: 'stats-title' }, statsMonthSelect('rep'), '반복 To-Do'),
+    items.length ? h('div', { class: 'stats-card stats-split' },
+      h('div', { class: 'stats-half' },
+        h('ul', { class: 'stats-list' }, items.map((g) => h('li', null,
+          h('span', { class: 'stats-rep' }, '🔁'),
+          h('span', { class: 'stats-name' }, g.title,
+            h('small', null, `${g.total}일 중 ${g.done}일 · ${pctOf(g.done, g.total)}%`)))))),
+      h('div', { class: 'stats-half' },
+        h('div', { class: 'segmented two stats-tabs' }, tabBtn('wd', '요일별'), tabBtn('item', '항목별')),
+        st.tab === 'wd'
+          ? h('div', { class: 'chart-cols' }, byWd.map((b) => h('div', { class: 'chart-col' },
+            h('div', { class: 'chart-track', title: b.total ? `${pctOf(b.done, b.total)}%` : null }, b.total ? h('i', { style: { height: `${Math.max(2, pctOf(b.done, b.total))}%` } }) : null),
+            h('span', { class: 'chart-lab' }, b.w),
+            h('span', { class: 'chart-pct' }, b.total ? `${pctOf(b.done, b.total)}%` : '–'))))
+          : h('div', { class: 'chart-rows' }, items.map((g) => h('div', { class: 'chart-row' },
+            h('div', { class: 'chart-row-head' }, h('span', null, g.title), h('b', null, `${pctOf(g.done, g.total)}%`)),
+            h('div', { class: 'bar' }, h('div', { class: 'bar-fill', style: { width: `${pctOf(g.done, g.total)}%` } })))))))
+      : h('p', { class: 'stats-card stats-empty' }, '이 달에는 반복 일정이 없어요'),
+
+    h('h3', { class: 'stats-title' }, statsMonthSelect('all'), '전체 To-Do', h('small', null, '반복 제외')),
+    ones.length ? h('div', { class: 'stats-card stats-split' },
+      half('달성', done, '아직 없어요'),
+      half('미달성', undone, '모두 달성했어요 🎉'))
+      : h('p', { class: 'stats-card stats-empty' }, '이 달에 오늘까지 적은 할 일이 없어요'),
+    h('p', { class: 'hint center' }, '달성률은 그 주·그 달 끝까지의 할 일 전체(반복 포함) 기준이에요.'));
+}
+
 function bottomNav() {
   const tab = (id, label, ic) => h('button', {
     type: 'button', class: `nav-tab${state.view === id ? ' active' : ''}`, 'aria-current': state.view === id ? 'page' : null,
     onclick: () => { state.view = id; prefSet('view', id); render();
-      const main = root.querySelector('.main'); if (main) main.scrollTop = 0; window.scrollTo(0, 0); },
+      const main = root.querySelector('.main'); if (main) main.scrollTop = 0; window.scrollTo(0, 0);
+      if (id === 'stats') reload(); },
   }, icon(ic), h('span', null, label));
-  return h('nav', { class: 'bottom-nav' }, tab('share', '공유 보기', 'split'), tab('mine', '내 목록', 'list'));
+  return h('nav', { class: 'bottom-nav' }, tab('share', '공유 보기', 'split'), tab('mine', '내 목록', 'list'), tab('stats', '통계', 'user'));
 }
 
 // ---------------- 시트(모달) ----------------
