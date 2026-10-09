@@ -92,6 +92,8 @@ async function reload() {
       state.cats.clear();
       state.todos.clear();
       ids.forEach((id, i) => { state.cats.set(id, res[i][0]); state.todos.set(id, res[i][1]); });
+      // 아직 저장 중인 체크는 방금 누른 상태를 유지한다 (저장 전에 읽어 온 옛 값으로 되돌아가지 않게)
+      for (const t of state.todos.get(me.id) || []) { const p = pendingStatus.get(t.id); if (p) t.status = p.status; }
       if (state.sheet?.type === 'month') await loadMonth();
       if (state.view === 'stats') await loadStats();
       if (my !== seq) return;
@@ -147,6 +149,14 @@ async function act(fn) {
   await reload();
 }
 
+// 추가·요청 버튼용: 앞의 저장이 끝나기 전에 또 눌러도 한 번만 실행한다 (두 번 등록 방지)
+let busy = false;
+async function actOnce(fn) {
+  if (busy) return;
+  busy = true;
+  try { await act(fn); } finally { busy = false; }
+}
+
 // 시간이 있는 일은 시간 순으로 위에, 나머지는 원래 순서대로
 const todosOf = (userId) => (state.todos.get(userId) || []).filter((t) => t.date === state.selected)
   .sort((a, b) => (timeKey(a) < timeKey(b) ? -1 : timeKey(a) > timeKey(b) ? 1 : 0));
@@ -168,20 +178,26 @@ function dayDots(d, hasTodo) {
 }
 
 // ---------------- 렌더링 ----------------
+const SCROLLERS = ['.main', '.pane-scroll', '.stats-half', '.sheet-body'];
+let lastSheetType;
 function render() {
   const active = document.activeElement;
   const key = active?.dataset?.key;
   let s0 = null;
   let s1 = null;
   try { s0 = active.selectionStart; s1 = active.selectionEnd; } catch { /* 선택 범위 없는 요소 */ }
-  const sheetScroll = root.querySelector('.sheet-body')?.scrollTop;
-  const mainScroll = root.querySelector('.main')?.scrollTop;
+  // 스크롤되는 칸마다 위치를 기억했다가 다시 그린 뒤 되돌린다 (공유 보기의 각 칸, 통계 목록 포함)
+  const scrolls = SCROLLERS.map((sel) => [...root.querySelectorAll(sel)].map((el) => el.scrollTop));
+  const sheetType = state.sheet?.type;
 
   root.replaceChildren(...view().filter(Boolean));
   root.classList.toggle('fill', !!root.querySelector('.split-3, .split-4'));
   root.classList.toggle('shell', !!root.querySelector('.bottom-nav'));
-  const main = root.querySelector('.main');
-  if (main && mainScroll) main.scrollTop = mainScroll;
+  SCROLLERS.forEach((sel, i) => {
+    if (sel === '.sheet-body' && sheetType !== lastSheetType) return; // 다른 팝업으로 바뀌면 맨 위부터
+    root.querySelectorAll(sel).forEach((el, j) => { if (scrolls[i][j]) el.scrollTop = scrolls[i][j]; });
+  });
+  lastSheetType = sheetType;
 
   if (key) {
     const el = root.querySelector(`[data-key="${CSS.escape(key)}"]`);
@@ -190,8 +206,6 @@ function render() {
       try { if (s0 != null) el.setSelectionRange(s0, s1); } catch { /* 무시 */ }
     }
   }
-  const body = root.querySelector('.sheet-body');
-  if (body && sheetScroll) body.scrollTop = sheetScroll;
 }
 
 function view() {
@@ -431,13 +445,25 @@ function deleteTodo(t) {
   });
 }
 
+// 체크는 누른 순서대로 하나씩 저장한다. 빠르게 두 번 누르면(할 일 전 → 진행중 → 완료)
+// 저장 요청 두 개가 뒤바뀌어 도착해 '진행중'으로 되돌아가는 일이 있었다.
+const pendingStatus = new Map(); // 할 일 id -> { status: 마지막으로 누른 상태, n: 저장 중인 요청 수 }
+let statusQueue = Promise.resolve();
 function cycleStatus(t) {
   const status = nextStatus(t.status);
   const list = state.todos.get(state.me.id) || [];
   const row = list.find((x) => x.id === t.id);
   if (row) row.status = status; // 바로 반영하고 저장
+  pendingStatus.set(t.id, { status, n: (pendingStatus.get(t.id)?.n || 0) + 1 });
   render();
-  act(() => store.updateTodo(t.id, { status }));
+  const job = statusQueue.then(() => store.updateTodo(t.id, { status }));
+  statusQueue = job.catch(() => {});
+  act(async () => {
+    try { await job; } finally {
+      const p = pendingStatus.get(t.id);
+      if (p && --p.n <= 0) pendingStatus.delete(t.id);
+    }
+  });
 }
 
 // 다 끝내기 전에는 반올림으로 100%가 되지 않게 한다
@@ -560,8 +586,10 @@ function addForm(key, catMode) {
     e.preventDefault();
     const title = (state.drafts[key] || '').trim();
     if (!title) return;
+    if (busy) return;
     state.drafts[key] = '';
-    act(() => store.createTodo({ date: state.selected, title, category_id: catId || null }));
+    e.currentTarget.querySelector('input').value = ''; // 저장을 기다리는 동안 같은 글자로 또 추가되지 않게 바로 비운다
+    actOnce(() => store.createTodo({ date: state.selected, title, category_id: catId || null }));
   };
   if (catMode === 'below') {
     return h('form', { class: 'add-form stacked', onsubmit },
@@ -819,7 +847,7 @@ function partnerSheet() {
         onsubmit: (e) => {
           e.preventDefault();
           const q = state.drafts.req;
-          act(async () => {
+          actOnce(async () => {
             const r = await store.requestShare(q);
             state.drafts.req = '';
             return r === 'accepted' ? '연결됐어요' : '연결 요청을 보냈어요. 상대가 수락하면 보여요.';
@@ -906,6 +934,7 @@ function todoSheet(s) {
       category_id: state.drafts['e-cat'] || null, status, ...times,
     };
     state.sheet = null;
+    render();
     act(async () => {
       // 제목·카테고리·시간은 이 날부터 반복 전체에, 날짜·상태는 이 일정에만
       if (scopeAll) await store.updateSeries(series.id, series.from, { title: patch.title, category_id: patch.category_id, ...times });
@@ -1041,9 +1070,11 @@ function addSheet(s) {
     const times = timeValues('a');
     const problem = timeProblem(times);
     if (problem) { toast(problem); return; }
+    if (busy) return;
     state.sheet = null;
     state.drafts[s.fromKey] = '';
-    act(() => store.createTodo({ date: dr['a-date'] || state.selected, title, category_id: dr['a-cat'] || null, ...times }));
+    render(); // 저장을 기다리지 않고 팝업부터 닫는다 (그 사이 또 눌러 두 번 등록되지 않게)
+    actOnce(() => store.createTodo({ date: dr['a-date'] || state.selected, title, category_id: dr['a-cat'] || null, ...times }));
   };
   return {
     title: '할 일 추가',
@@ -1113,9 +1144,11 @@ function repeatSheet(s) {
     const seriesId = uid();
     const repeat = repeatLabel(rule);
     const base = Date.now();
+    if (busy) return;
     state.sheet = null;
     if (s.fromKey) state.drafts[s.fromKey] = '';
-    act(async () => {
+    render();
+    actOnce(async () => {
       await store.createTodos(dates.map((date, i) => ({
         date, title, category_id: dr['r-cat'] || null, sort: base + i, series_id: seriesId, repeat, ...times,
       })));
@@ -1181,7 +1214,7 @@ function newCategorySheet(s) {
       class: 'stack',
       onsubmit: (e) => {
         e.preventDefault();
-        act(async () => {
+        actOnce(async () => {
           const id = await store.createCategory({ name: state.drafts['nc-name'], color, is_public: isPublic });
           if (s.ret.after === 'todo') {
             state.drafts['e-cat'] = id;
@@ -1279,7 +1312,7 @@ function settingsSheet() {
           }, icon('trash'))))),
         h('form', {
           class: 'row gap',
-          onsubmit: (e) => { e.preventDefault(); const name = state.drafts['new-cat']; act(async () => { await store.createCategory({ name }); state.drafts['new-cat'] = ''; }); },
+          onsubmit: (e) => { e.preventDefault(); const name = state.drafts['new-cat']; actOnce(async () => { await store.createCategory({ name }); state.drafts['new-cat'] = ''; }); },
         },
         draftInput('new-cat', { placeholder: '새 카테고리', maxlength: 20, required: true }),
         h('button', { class: 'btn', type: 'submit' }, '추가'))),
