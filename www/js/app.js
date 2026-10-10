@@ -103,13 +103,32 @@ async function reload() {
     toast(e.message || '불러오지 못했어요');
   }
   state.ready = true;
-  // 시간·날짜 선택 창이 떠 있을 때 다시 그리면 창이 닫힌다. 고르기를 마친 뒤(blur)로 미룬다.
-  const picking = document.activeElement;
-  if (picking?.matches?.('input[type=time], input[type=date]')) {
-    picking.addEventListener('blur', () => setTimeout(render, 0), { once: true });
-    return;
-  }
-  render();
+  renderWhenFree();
+}
+
+// 누른 직후가 아니라 뒤늦게(서버 응답, 친구의 실시간 변경) 다시 그릴 때 쓴다.
+// 시간·날짜 선택 창이나 휴대폰의 선택 목록이 떠 있을 때 그리면 그 창이 닫히고,
+// 손가락을 대고 있는 동안 그리면 그 누름이 사라지므로, 끝난 뒤로 미룬다.
+const COARSE = matchMedia('(pointer: coarse)').matches;
+let pressing = false;
+document.addEventListener('pointerdown', () => { pressing = true; }, true);
+for (const type of ['pointerup', 'pointercancel']) document.addEventListener(type, () => { pressing = false; }, true);
+let renderWait = 0; // 기다리는 중인 요청 번호. 새 요청이 오면 앞의 것은 버린다 (칸이 blur 없이 사라져도 멈추지 않게)
+function renderWhenFree() {
+  const my = ++renderWait;
+  const el = document.activeElement;
+  const isSelect = COARSE && !!el?.matches?.('select');
+  const picking = isSelect || !!el?.matches?.('input[type=time], input[type=date]');
+  if (!picking && !pressing) { render(); return; }
+  let fired = false;
+  const again = () => {
+    if (fired || my !== renderWait) return;
+    fired = true;
+    setTimeout(() => { if (my === renderWait) renderWhenFree(); }, 60); // 누름에 이어지는 click까지 지나간 뒤에
+  };
+  if (picking) el.addEventListener('blur', again, { once: true });
+  if (isSelect) el.addEventListener('change', () => { el.blur(); again(); }, { once: true });
+  if (pressing) for (const type of ['pointerup', 'pointercancel']) document.addEventListener(type, again, { once: true, capture: true });
 }
 
 // 통계: 이번 주·이번 달(위쪽 달성률)과 반복·전체 칸에서 각각 고른 달의 내 할 일
@@ -523,7 +542,7 @@ function nudgeBell(p, list) {
   const key = `${p.id}|${today()}`;
   if (!state.nudgeLeft.has(key)) {
     state.nudgeLeft.set(key, null); // 불러오는 중
-    store.nudgesLeft(p.id).then((n) => { state.nudgeLeft.set(key, n); render(); }).catch(() => {}); // 실패하면 숫자 없이 벨만
+    store.nudgesLeft(p.id).then((n) => { state.nudgeLeft.set(key, n); renderWhenFree(); }).catch(() => {}); // 실패하면 숫자 없이 벨만
   }
   const left = state.nudgeLeft.get(key);
   return h('button', {
@@ -952,10 +971,11 @@ function todoSheet(s) {
     if (scopeAll) {
       if (!confirm(`${series.from.slice(5).replace('-', '/')}부터 이 반복 일정(${series.label || '반복'})을 모두 삭제할까요?`)) return;
       state.sheet = null;
+      render(); // 삭제를 기다리지 않고 팝업부터 닫는다
       act(async () => { await store.deleteSeries(series.id, series.from); return '반복 일정을 삭제했어요'; });
       return;
     }
-    if (confirm('이 할 일을 삭제할까요?')) { state.sheet = null; act(() => store.deleteTodo(s.id)); }
+    if (confirm('이 할 일을 삭제할까요?')) { state.sheet = null; render(); act(() => store.deleteTodo(s.id)); }
   };
   return {
     title: '할 일 수정',
@@ -1141,19 +1161,41 @@ function openRepeat(fromKey) {
 function repeatSheet(s) {
   const cats = state.cats.get(state.me.id) || [];
   const dr = state.drafts;
-  const rule = { freq: dr['r-freq'], days: dr['r-days'], mday: Math.min(31, Math.max(1, Number(dr['r-mday']) || 1)), start: dr['r-start'], end: dr['r-end'] };
-  const tooLong = rule.start && rule.end && rule.end > addDays(rule.start, REPEAT_MAX_DAYS - 1);
-  const dates = tooLong ? [] : expandRepeat(rule);
+  // 지금 입력된 값으로 만들 날짜들과 문제점. 날짜 칸은 화면을 다시 그리지 않으므로 추가할 때도 새로 계산한다.
+  const plan = () => {
+    const rule = { freq: dr['r-freq'], days: dr['r-days'], mday: Math.min(31, Math.max(1, Number(dr['r-mday']) || 1)), start: dr['r-start'], end: dr['r-end'] };
+    const tooLong = rule.start && rule.end && rule.end > addDays(rule.start, REPEAT_MAX_DAYS - 1);
+    const dates = tooLong ? [] : expandRepeat(rule);
+    let problem = null;
+    if (!rule.start || !rule.end) problem = '시작일과 종료일을 골라 주세요';
+    else if (rule.end < rule.start) problem = '종료일이 시작일보다 빨라요';
+    else if (tooLong) problem = '최대 1년까지 만들 수 있어요';
+    else if (rule.freq === 'weekly' && !rule.days.length) problem = '요일을 하나 이상 골라 주세요';
+    else if (!dates.length) problem = '이 기간에는 해당하는 날이 없어요';
+    return { rule, dates, problem };
+  };
+  const { rule, problem } = plan();
   const md = (x) => { const t = parseYmd(x); return `${t.getMonth() + 1}/${t.getDate()}(${weekdayOf(x)})`; };
-  let problem = null;
-  if (!rule.start || !rule.end) problem = '시작일과 종료일을 골라 주세요';
-  else if (rule.end < rule.start) problem = '종료일이 시작일보다 빨라요';
-  else if (tooLong) problem = '최대 1년까지 만들 수 있어요';
-  else if (rule.freq === 'weekly' && !rule.days.length) problem = '요일을 하나 이상 골라 주세요';
-  else if (!dates.length) problem = '이 기간에는 해당하는 날이 없어요';
+  const preview = (p) => h('div', { class: `rep-preview${p.problem ? ' warn' : ''}` },
+    p.problem || [
+      h('b', null, `🔁 ${repeatLabel(p.rule)} · 총 ${p.dates.length}개`),
+      h('div', null, p.dates.length <= 4 ? p.dates.map(md).join(', ') : `${md(p.dates[0])}, ${md(p.dates[1])} … ${md(p.dates[p.dates.length - 1])}`),
+    ]);
+  // 아이폰은 날짜 선택 창에서 달·연도를 돌릴 때마다 change를 보낸다. render()로 칸을 새로 만들면
+  // 창이 닫히므로 미리보기와 추가 버튼만 바꾼다.
+  const dateInput = (key) => h('input', {
+    type: 'date', value: dr[key] || '',
+    onchange: (e) => {
+      dr[key] = e.target.value;
+      const p = plan();
+      e.target.form.querySelector('.rep-preview').replaceWith(preview(p));
+      e.target.form.querySelector('button[type=submit]').disabled = !!p.problem;
+    },
+  });
 
   const submit = (e) => {
     e.preventDefault();
+    const { rule, dates, problem } = plan();
     if (problem) { toast(problem); return; }
     const title = (dr['r-title'] || '').trim();
     if (!title) { toast('할 일을 입력해 주세요'); return; }
@@ -1205,16 +1247,10 @@ function repeatSheet(s) {
           onchange: (e) => { dr['r-mday'] = e.target.value; render(); },
         }, Array.from({ length: 31 }, (_, i) => h('option', { value: String(i + 1) }, `${i + 1}일${i + 1 >= 29 ? ' (없는 달은 말일)' : ''}`)))) : null,
       h('div', { class: 'two-col' },
-        h('label', { class: 'field' }, h('span', null, '시작일'),
-          h('input', { type: 'date', value: dr['r-start'] || '', onchange: (e) => { dr['r-start'] = e.target.value; render(); } })),
-        h('label', { class: 'field' }, h('span', null, '종료일'),
-          h('input', { type: 'date', value: dr['r-end'] || '', onchange: (e) => { dr['r-end'] = e.target.value; render(); } }))),
+        h('label', { class: 'field' }, h('span', null, '시작일'), dateInput('r-start')),
+        h('label', { class: 'field' }, h('span', null, '종료일'), dateInput('r-end'))),
       timeFields('r'),
-      h('div', { class: `rep-preview${problem ? ' warn' : ''}` },
-        problem || [
-          h('b', null, `🔁 ${repeatLabel(rule)} · 총 ${dates.length}개`),
-          h('div', null, dates.length <= 4 ? dates.map(md).join(', ') : `${md(dates[0])}, ${md(dates[1])} … ${md(dates[dates.length - 1])}`),
-        ]),
+      preview(plan()),
       h('button', { class: 'btn btn-primary btn-block', type: 'submit', disabled: !!problem }, '추가')),
   };
 }
@@ -1464,7 +1500,7 @@ async function refreshPush() {
     state.pushOn = !!sub && Notification.permission === 'granted';
     if (state.pushOn && state.me && !state.me.needsProfile) await saveSubscription(sub);
   } catch (e) { console.error(e); }
-  render();
+  renderWhenFree();
 }
 
 async function enablePush() {
