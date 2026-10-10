@@ -103,6 +103,12 @@ async function reload() {
     toast(e.message || '불러오지 못했어요');
   }
   state.ready = true;
+  // 시간·날짜 선택 창이 떠 있을 때 다시 그리면 창이 닫힌다. 고르기를 마친 뒤(blur)로 미룬다.
+  const picking = document.activeElement;
+  if (picking?.matches?.('input[type=time], input[type=date]')) {
+    picking.addEventListener('blur', () => setTimeout(render, 0), { once: true });
+    return;
+  }
   render();
 }
 
@@ -1020,26 +1026,39 @@ function timeFields(p) {
   const item = (label, tk, ak, defaultAlert) => {
     const time = dr[tk] || '';
     const on = alertIsOn(dr[ak]);
-    return h('div', { class: 'time-item' },
+    // 아이폰은 시간 휠을 열거나 돌릴 때마다 change를 보낸다. 여기서 render()로 입력칸을 새로 만들면
+    // 선택 창이 닫히므로, 지우기 버튼과 알림 줄은 미리 그려 두고 보이기/숨기기만 바꾼다.
+    const onTime = (e) => {
+      const v = e.target.value;
+      dr[tk] = v;
+      const box = e.target.closest('.time-item');
+      box.classList.toggle('no-time', !v);
+      if (!v) {
+        dr[ak] = '';
+        box.querySelector('.alert-check input').checked = false;
+        box.querySelector('.alert-row select')?.remove();
+      }
+    };
+    return h('div', { class: `time-item${time ? '' : ' no-time'}` },
       h('div', { class: 'time-row' },
         h('span', { class: 'time-lab' }, label),
         h('input', {
           type: 'time', 'data-key': tk, value: time, 'aria-label': `${label} 시간`,
-          oninput: (e) => { dr[tk] = e.target.value; },
-          onchange: (e) => { dr[tk] = e.target.value; if (!e.target.value) dr[ak] = ''; render(); },
+          oninput: onTime,
+          onchange: onTime,
         }),
-        time ? h('button', {
+        h('button', {
           class: 'time-clear', type: 'button', 'aria-label': `${label} 시간 지우기`, title: '지우기',
           onclick: () => { dr[tk] = ''; dr[ak] = ''; render(); },
-        }, icon('x')) : null),
-      time ? h('div', { class: 'alert-row' },
+        }, icon('x'))),
+      h('div', { class: 'alert-row' },
         h('label', { class: 'alert-check' },
           h('input', { type: 'checkbox', checked: on, onchange: (e) => { dr[ak] = e.target.checked ? defaultAlert : ''; render(); } }),
           `${label} 알림`),
         on ? h('select', {
           'aria-label': `${label} 알림 시점`, value: String(dr[ak]),
           onchange: (e) => { dr[ak] = Number(e.target.value); render(); },
-        }, ALERT_OPTIONS.map(([m, text]) => h('option', { value: String(m) }, text))) : null) : null);
+        }, ALERT_OPTIONS.map(([m, text]) => h('option', { value: String(m) }, text))) : null));
   };
   const wantsAlert = (dr[k.start] && alertIsOn(dr[k.sa])) || (dr[k.due] && alertIsOn(dr[k.da]));
   return h('div', { class: 'field time-fields' },

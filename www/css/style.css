@@ -502,6 +502,7 @@ input[type=time]::-webkit-date-and-time-value { text-align: left; margin: 0; }
 .alert-row { display: flex; align-items: center; gap: 8px; min-height: 40px; padding-left: 42px; }
 .alert-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .alert-check input { width: 20px; height: 20px; margin: 0; accent-color: var(--me); }
+.time-item.no-time .time-clear, .time-item.no-time .alert-row { display: none; }
 .alert-row select { flex: 1; min-width: 0; width: auto; min-height: 38px; padding: 4px 10px; }
 
 /* ---------- 콕 찌르기 🔔 ---------- */
