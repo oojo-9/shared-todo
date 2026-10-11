@@ -36,7 +36,12 @@ export function createLocalStore() {
     ls.set(DB_KEY, JSON.stringify(d));
     return d;
   }
-  function commit() { ls.set(DB_KEY, JSON.stringify(db)); emit(); }
+  function commit() {
+    // 할 일이 지워지면 그 사진도 함께 지운다 (서버의 cascade와 같은 규칙)
+    db.photos = (db.photos || []).filter((p) => db.todos.some((t) => t.id === p.todo_id));
+    ls.set(DB_KEY, JSON.stringify(db));
+    emit();
+  }
   function emit() { listeners.forEach((f) => { try { f(); } catch (e) { console.error(e); } }); }
   function setSession(id) {
     sessionId = id;
@@ -235,6 +240,42 @@ export function createLocalStore() {
       own(db.todos, id);
       db.todos = db.todos.filter((t) => t.id !== id);
       commit();
+    },
+
+    // ---- 찰칵 (인증사진): 데모에선 사진을 이 브라우저에 글자로 바꿔 저장하고, 공간이 작아 최근 8장만 남긴다 ----
+    async listPhotos(limit) {
+      need();
+      return (db.photos || [])
+        .map((p) => ({ p, t: db.todos.find((t) => t.id === p.todo_id) }))
+        .filter(({ p, t }) => t && (p.user_id === sessionId || (canView(p.user_id) && isPublicCategory(t.category_id))))
+        .sort((a, b) => (a.p.created_at < b.p.created_at ? 1 : -1))
+        .slice(0, limit)
+        .map(({ p: { data, ...p }, t }) => ({ ...p, title: t.title, url: data }));
+    },
+    async listPhotoMarks(userIds, from, to) {
+      return (db.photos || []).filter((p) => userIds.includes(p.user_id)
+        && db.todos.some((t) => t.id === p.todo_id && t.date >= from && t.date <= to)).map((p) => p.todo_id);
+    },
+    async addPhoto(todoId, { blob, width, height }) {
+      const me = need();
+      own(db.todos, todoId);
+      const data = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(new Error('사진을 읽지 못했어요'));
+        r.readAsDataURL(blob);
+      });
+      db.photos = [...(db.photos || []), { id: uid(), user_id: me.id, todo_id: todoId, data, size: blob.size, width, height, created_at: now() }].slice(-8);
+      commit();
+    },
+    async deletePhoto(id) {
+      own(db.photos || [], id);
+      db.photos = db.photos.filter((p) => p.id !== id);
+      commit();
+    },
+    async photoUsage() {
+      const sum = (l) => l.reduce((n, p) => n + (p.size || 0), 0);
+      return { total: sum(db.photos || []), mine: sum((db.photos || []).filter((p) => p.user_id === sessionId)) };
     },
 
     async listConnections() {

@@ -78,6 +78,10 @@ python -m http.server 5173 --directory www
 
 SQL Editor에서 `supabase/005_repeat.sql` 실행 (todos에 `series_id`, `repeat` 칸 추가). 반복 일정은 날짜마다 할 일을 만들어 같은 `series_id`로 묶습니다.
 
+### 찰칵 (인증사진)
+
+SQL Editor에서 `supabase/009_photos.sql` 실행 (Storage 비공개 보관함 `photos`, `photos`·`photo_trash` 표, 권한). 사진은 앱이 올리기 전에 긴 쪽 1280px JPEG로 줄이고, 할 일을 지우면 사진 줄은 DB가, 파일은 주인의 앱이 지웁니다. 한도는 `js/config.js`의 `photoQuotaBytes`.
+
 알림 서버(`notify-done`)는 할 일 완료 알림, 하루 알림, 연결 요청·수락 알림을 모두 처리합니다. 코드를 바꾸면 대시보드에서 다시 붙여 넣고 Deploy 하세요.
 
 키와 비밀값은 `.secrets/push-keys.json`(git에 올라가지 않음)에 있습니다. 아이폰은 홈 화면에 추가한 앱에서만 알림을 받을 수 있습니다.

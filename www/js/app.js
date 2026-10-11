@@ -3,7 +3,7 @@ import {
   h, icon, ymd, parseYmd, addDays, startOfWeek, today, WEEK, weekdayOf,
   STATUS, STATUS_LABEL, nextStatus, COLORS, toast, prefGet, prefSet, b64urlToBytes,
   expandRepeat, repeatLabel, REPEAT_MAX_DAYS, uid,
-  ALERT_OPTIONS, alertLabel, hhmm, timeKey, isOverdue,
+  ALERT_OPTIONS, alertLabel, hhmm, timeKey, isOverdue, shrinkImage, fmtBytes,
 } from './util.js';
 import { createLocalStore } from './store-local.js';
 import { holidayOf } from './holidays.js';
@@ -14,7 +14,7 @@ let store;
 const state = {
   ready: false,
   me: null,
-  view: ['mine', 'stats'].includes(prefGet('view')) ? prefGet('view') : 'share', // 화면은 세 개: 공유 보기, 내 목록, 통계
+  view: ['mine', 'snap', 'stats'].includes(prefGet('view')) ? prefGet('view') : 'share', // 화면은 네 개: 공유 보기, 내 목록, 찰칵, 통계
   stats: { rep: today().slice(0, 8) + '01', all: today().slice(0, 8) + '01', tab: 'wd', head: null, repList: null, allList: null, allChart: false, day: 'this', pickFrom: today(), pickTo: today(), dayList: null }, // 통계: 반복·전체 각각 고른 달, 요일별/항목별 탭, 날짜별(이번 주/저번 주/고른 기간), 불러온 할 일
   selected: today(),
   pinned: readPinned(), // 친구가 3명보다 많을 때 공유 보기에 띄울 친구 id
@@ -26,6 +26,9 @@ const state = {
   authMode: 'signin',
   pushOn: false, // 이 기기에서 푸시 알림을 받는 중인지
   nudgeLeft: new Map(), // '상대id|날짜' -> 오늘 콕 찌르기 남은 횟수
+  snap: { list: null, limit: 20, more: false, error: null }, // 찰칵: 불러온 사진, 몇 장까지 불러올지
+  photoTodos: new Set(), // 이번 주 할 일 중 사진이 붙은 것의 id
+  usage: null, // 설정의 사진 용량 { total, mine }
 };
 
 function readPinned() {
@@ -87,8 +90,12 @@ async function reload() {
       const from = startOfWeek(state.selected);
       const to = addDays(from, 6);
       const ids = [me.id, ...visiblePartners().map((p) => p.id)];
-      const res = await Promise.all(ids.map((id) => Promise.all([store.listCategories(id), store.listTodos(id, from, to)])));
+      const [res, marks] = await Promise.all([
+        Promise.all(ids.map((id) => Promise.all([store.listCategories(id), store.listTodos(id, from, to)]))),
+        store.listPhotoMarks(ids, from, to).catch(() => []), // 사진 표시는 못 불러와도 할 일은 보여 준다
+      ]);
       if (my !== seq) return;
+      state.photoTodos = new Set(marks);
       state.cats.clear();
       state.todos.clear();
       ids.forEach((id, i) => { state.cats.set(id, res[i][0]); state.todos.set(id, res[i][1]); });
@@ -96,6 +103,7 @@ async function reload() {
       for (const t of state.todos.get(me.id) || []) { const p = pendingStatus.get(t.id); if (p) t.status = p.status; }
       if (state.sheet?.type === 'month') await loadMonth();
       if (state.view === 'stats') await loadStats();
+      if (state.view === 'snap') await loadSnap();
       if (my !== seq) return;
     }
   } catch (e) {
@@ -239,11 +247,11 @@ function view() {
   if (state.me.needsProfile) return [profileView()];
   return [
     topBar(),
-    state.view === 'stats' ? null : weekStrip(),
-    h('main', { class: 'main' },
-      state.view === 'stats' ? null : weekHolidays(),
+    TOP_TITLE[state.view] ? null : weekStrip(),
+    h('main', { class: 'main', onscroll: state.view === 'snap' ? onSnapScroll : null },
+      TOP_TITLE[state.view] ? null : weekHolidays(),
       requestBanner(),
-      state.view === 'share' ? shareView() : state.view === 'stats' ? statsView() : mineView()),
+      { share: shareView, stats: statsView, snap: snapView, mine: mineView }[state.view]()),
     bottomNav(),
     state.sheet ? sheetView() : null,
   ];
@@ -329,17 +337,19 @@ function profileView() {
 }
 
 // ---------- 상단 ----------
+// 날짜와 상관없는 화면은 달·주 선택 대신 제목을 보여 준다
+const TOP_TITLE = { stats: 'To-Do 리포트', snap: '찰칵' };
 function topBar() {
   const d = parseYmd(state.selected);
   return h('header', { class: 'topbar' },
-    state.view === 'stats' ? h('h1', { class: 'top-title' }, 'To-Do 리포트') : h('button', {
+    TOP_TITLE[state.view] ? h('h1', { class: 'top-title' }, TOP_TITLE[state.view]) : h('button', {
       class: 'month-btn', type: 'button', 'aria-label': '달력 열기',
       onclick: () => openMonth(),
     }, `${d.getFullYear()}년 ${d.getMonth() + 1}월`, icon('down')),
     h('div', { class: 'top-actions' },
       store.mode === 'local' ? h('span', { class: 'demo-badge', title: '이 브라우저에만 저장돼요' }, '데모') : null,
       h('button', { class: 'btn btn-sm btn-accent', type: 'button', onclick: () => openSheet('partner') }, icon('userPlus'), '상대 추가'),
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': '설정', onclick: () => openSheet('settings') },
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': '설정', onclick: openSettings },
         icon('gear'), state.conns.incoming.length ? h('span', { class: 'badge-dot' }) : null)));
 }
 
@@ -438,14 +448,15 @@ function todoRow(t, { editable, cats, deletable = false }) {
       onkeydown: editable ? (e) => { if (e.key === 'Enter') openTodo(t); } : null,
     },
     h('div', { class: 'todo-title' }, t.title),
-    (c || t.status === 'doing' || t.series_id || hhmm(t.start_time) || hhmm(t.due_time)) ? h('div', { class: 'todo-meta' },
+    (c || t.status === 'doing' || t.series_id || hhmm(t.start_time) || hhmm(t.due_time) || state.photoTodos.has(t.id)) ? h('div', { class: 'todo-meta' },
       hhmm(t.start_time) ? h('span', { class: 'time-tag', title: editable && t.start_alert != null ? `시작 알림: ${alertLabel(t.start_alert)}` : '시작 시간' },
         `🕑 ${hhmm(t.start_time)}${editable && t.start_alert != null ? ' 🔔' : ''}`) : null,
       hhmm(t.due_time) ? h('span', { class: `time-tag${isOverdue(t) ? ' overdue' : ''}`, title: editable && t.due_alert != null ? `마감 알림: ${alertLabel(t.due_alert)}` : '마감 시간' },
         `마감 ${hhmm(t.due_time)}${editable && t.due_alert != null ? ' 🔔' : ''}`) : null,
       t.series_id ? h('span', { class: 'rep-tag', title: t.repeat || '반복 일정' }, '🔁') : null,
       c ? h('span', { class: 'cat-tag' }, h('i', { class: 'cat-dot' }), c.name) : null,
-      t.status === 'doing' ? h('span', { class: 'doing-tag' }, '진행중') : null) : null),
+      t.status === 'doing' ? h('span', { class: 'doing-tag' }, '진행중') : null,
+      state.photoTodos.has(t.id) ? h('span', { class: 'photo-tag', title: '인증사진 있음' }, '📷') : null) : null),
     deletable ? h('button', {
       class: 'del-btn', type: 'button', 'aria-label': `${t.title} 삭제`, title: '삭제',
       onclick: () => deleteTodo(t),
@@ -454,11 +465,15 @@ function todoRow(t, { editable, cats, deletable = false }) {
 
 // 바로 삭제하고, 몇 초 동안 되돌리기를 보여 준다
 function deleteTodo(t) {
+  // 사진은 되돌릴 수 없어서 먼저 묻는다
+  const hasPhoto = state.photoTodos.has(t.id);
+  if (hasPhoto && !confirm('이 할 일을 삭제할까요? 인증사진도 함께 삭제돼요.')) return;
   const list = state.todos.get(state.me.id) || [];
   state.todos.set(state.me.id, list.filter((x) => x.id !== t.id));
   render();
   act(async () => {
     await store.deleteTodo(t.id);
+    if (hasPhoto) return '삭제했어요';
     toast('삭제했어요', {
       label: '되돌리기',
       onClick: () => act(() => store.createTodo({
@@ -480,6 +495,8 @@ function cycleStatus(t) {
   const row = list.find((x) => x.id === t.id);
   if (row) row.status = status; // 바로 반영하고 저장
   pendingStatus.set(t.id, { status, n: (pendingStatus.get(t.id)?.n || 0) + 1 });
+  // 완료로 바꾸면 인증사진을 남길지 묻는다 (이미 사진이 있거나 설정에서 껐으면 묻지 않는다)
+  if (status === 'done' && prefGet('askPhoto') !== 'off' && !state.photoTodos.has(t.id)) state.sheet = { type: 'proof', id: t.id, title: t.title };
   render();
   const job = statusQueue.then(() => store.updateTodo(t.id, { status }));
   statusQueue = job.catch(() => {});
@@ -805,14 +822,126 @@ function statsView() {
     h('p', { class: 'hint center' }, '달성률은 그 주·그 달 끝까지의 할 일 전체(반복 포함) 기준이에요.'));
 }
 
+// ---------- 찰칵: 인증사진 피드 ----------
+async function loadSnap() {
+  const sn = state.snap;
+  try {
+    const rows = await store.listPhotos(sn.limit + 1);
+    sn.more = rows.length > sn.limit;
+    sn.list = rows.slice(0, sn.limit);
+    sn.error = null;
+  } catch (e) {
+    console.error(e);
+    sn.error = e.message || '사진을 불러오지 못했어요';
+  }
+}
+
+// 끝 가까이 내리면 다음 사진들을 이어서 불러온다
+let snapMore = false;
+function loadMoreSnap() {
+  if (snapMore || !state.snap.more) return;
+  snapMore = true;
+  state.snap.limit += 20;
+  reload().finally(() => { snapMore = false; });
+}
+function onSnapScroll(e) {
+  const el = e.currentTarget;
+  if (el.scrollTop + el.clientHeight > el.scrollHeight - 600) loadMoreSnap();
+}
+
+// 화면을 다시 그릴 때마다 사진이 깜빡이지 않게, 한 번 만든 사진 칸은 그대로 다시 쓴다
+const snapImgs = new Map(); // 사진 id -> { url, el }
+function snapImg(p, alt) {
+  const hit = snapImgs.get(p.id);
+  if (hit && hit.url === p.url) return hit.el;
+  const el = h('img', { class: 'snap-img', src: p.url, alt, width: p.width || null, height: p.height || null, loading: 'lazy', decoding: 'async' });
+  snapImgs.set(p.id, { url: p.url, el });
+  return el;
+}
+
+function snapView() {
+  const sn = state.snap;
+  if (sn.error && !sn.list) return h('section', { class: 'snap' }, h('p', { class: 'empty-text big' }, sn.error));
+  if (!sn.list) return h('section', { class: 'snap' }, h('p', { class: 'empty-text big' }, '불러오는 중…'));
+  if (!sn.list.length) {
+    return h('section', { class: 'snap' },
+      h('p', { class: 'empty-text big' }, '아직 사진이 없어요'),
+      h('p', { class: 'hint center' }, '할 일을 완료로 체크하면 인증사진을 남길 수 있어요.'));
+  }
+  for (const id of snapImgs.keys()) if (!sn.list.some((p) => p.id === id)) snapImgs.delete(id);
+  const nameOf = (id) => (id === state.me.id ? state.me.nickname : state.conns.partners.find((x) => x.id === id)?.nickname || '친구');
+  return h('section', { class: 'snap' },
+    sn.list.map((p) => {
+      const name = nameOf(p.user_id);
+      const at = new Date(p.created_at);
+      return h('article', { class: 'snap-card' },
+        h('header', { class: 'snap-head' },
+          h('div', { class: 'snap-who' }, h('b', null, name), h('span', { class: 'snap-sep' }, '/'), h('span', { class: 'snap-todo' }, p.title)),
+          h('time', { class: 'snap-time' }, `${at.getMonth() + 1}/${at.getDate()} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`),
+          p.user_id === state.me.id ? h('button', {
+            class: 'del-btn', type: 'button', 'aria-label': `${p.title} 사진 삭제`, title: '사진 삭제',
+            onclick: () => { if (confirm('이 사진을 삭제할까요?')) act(async () => { await store.deletePhoto(p.id); return '사진을 삭제했어요'; }); },
+          }, icon('trash')) : null),
+        p.url ? snapImg(p, `${name}: ${p.title}`) : h('p', { class: 'empty-text' }, '사진을 불러오지 못했어요'));
+    }),
+    sn.more ? h('button', { class: 'btn btn-block', type: 'button', onclick: loadMoreSnap }, '더 보기') : null);
+}
+
+// 완료했을 때 뜨는 팝업: 카메라로 찍기 / 보관함에서 고르기 / 괜찮아요
+function proofSheet(s) {
+  return {
+    title: '인증사진',
+    body: [
+      h('p', { class: 'proof-lead' }, s.asked ? null : h('b', null, '완료! 🎉 '), `'${s.title}' 인증사진을 남길까요?`),
+      h('button', { class: 'btn btn-primary btn-block', type: 'button', onclick: () => pickPhoto(s, true) }, icon('camera'), '카메라로 찍기'),
+      h('button', { class: 'btn btn-block', type: 'button', onclick: () => pickPhoto(s, false) }, '사진 보관함에서 고르기'),
+      h('button', { class: 'btn btn-block', type: 'button', onclick: closeSheet }, s.asked ? '취소' : '괜찮아요'),
+      h('p', { class: 'hint center' }, '올린 사진은 찰칵 탭에 올라가요. 비공개 카테고리의 사진은 나만 볼 수 있어요.'),
+      s.asked ? null : h('button', {
+        class: 'link-btn', type: 'button',
+        onclick: () => { prefSet('askPhoto', 'off'); closeSheet(); toast('이제 묻지 않아요. 설정에서 다시 켤 수 있어요'); },
+      }, '완료할 때 다시 묻지 않기'),
+    ],
+  };
+}
+
+// 사진 고르는 창을 연다. 입력칸은 화면을 다시 그려도 사라지지 않게 #app 바깥에 둔다.
+function pickPhoto(todo, camera) {
+  document.querySelectorAll('.file-hidden').forEach((el) => el.remove());
+  const input = h('input', { class: 'file-hidden', type: 'file', accept: 'image/*', capture: camera ? 'environment' : null, tabindex: '-1', 'aria-hidden': 'true' });
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    input.remove();
+    if (file) uploadPhoto(todo, file);
+  });
+  input.addEventListener('cancel', () => input.remove());
+  document.body.append(input);
+  input.click();
+}
+
+let uploading = false;
+async function uploadPhoto(todo, file) {
+  if (uploading) { toast('앞의 사진을 올리는 중이에요'); return; }
+  uploading = true;
+  state.sheet = null;
+  render();
+  toast('사진을 올리는 중…');
+  try {
+    await act(async () => {
+      await store.addPhoto(todo.id, await shrinkImage(file));
+      return '📸 찰칵! 사진을 올렸어요';
+    });
+  } finally { uploading = false; }
+}
+
 function bottomNav() {
   const tab = (id, label, ic) => h('button', {
     type: 'button', class: `nav-tab${state.view === id ? ' active' : ''}`, 'aria-current': state.view === id ? 'page' : null,
     onclick: () => { state.view = id; prefSet('view', id); render();
       const main = root.querySelector('.main'); if (main) main.scrollTop = 0; window.scrollTo(0, 0);
-      if (id === 'stats') reload(); },
+      if (id === 'stats' || id === 'snap') reload(); },
   }, icon(ic), h('span', null, label));
-  return h('nav', { class: 'bottom-nav' }, tab('share', '공유 보기', 'split'), tab('mine', '내 목록', 'list'), tab('stats', '통계', 'user'));
+  return h('nav', { class: 'bottom-nav' }, tab('share', '공유 보기', 'split'), tab('mine', '내 목록', 'list'), tab('snap', '찰칵', 'camera'), tab('stats', '통계', 'user'));
 }
 
 // ---------------- 시트(모달) ----------------
@@ -838,7 +967,7 @@ function openTodo(t) {
 
 function sheetView() {
   const s = state.sheet;
-  const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet, repeat: repeatSheet, add: addSheet };
+  const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet, repeat: repeatSheet, add: addSheet, proof: proofSheet };
   const { title, body } = builders[s.type](s);
   return h('div', {
     class: 'sheet-overlay',
@@ -975,7 +1104,7 @@ function todoSheet(s) {
       act(async () => { await store.deleteSeries(series.id, series.from); return '반복 일정을 삭제했어요'; });
       return;
     }
-    if (confirm('이 할 일을 삭제할까요?')) { state.sheet = null; render(); act(() => store.deleteTodo(s.id)); }
+    if (confirm(state.photoTodos.has(s.id) ? '이 할 일을 삭제할까요? 인증사진도 함께 삭제돼요.' : '이 할 일을 삭제할까요?')) { state.sheet = null; render(); act(() => store.deleteTodo(s.id)); }
   };
   return {
     title: '할 일 수정',
@@ -1006,6 +1135,10 @@ function todoSheet(s) {
             },
           }, categoryOptions(cats)))),
       timeFields('e'),
+      todo ? h('button', {
+        class: 'btn btn-block', type: 'button',
+        onclick: () => openSheet('proof', { id: todo.id, title: todo.title, asked: true }),
+      }, icon('camera'), state.photoTodos.has(todo.id) ? '인증사진 더 올리기' : '인증사진 올리기') : null,
       h('div', { class: 'row gap end' },
         h('button', {
           class: 'btn btn-danger-ghost', type: 'button',
@@ -1307,6 +1440,36 @@ function newCategorySheet(s) {
   };
 }
 
+// 설정을 열 때마다 사진 용량을 새로 읽는다
+function openSettings() {
+  openSheet('settings');
+  store.photoUsage().then((u) => { state.usage = u; renderWhenFree(); }).catch(() => {}); // 실패하면 용량 줄만 비워 둔다
+}
+
+function photoSection() {
+  const u = state.usage;
+  const quota = config.photoQuotaBytes;
+  const ask = prefGet('askPhoto') !== 'off';
+  return h('div', { class: 'section' }, h('h3', null, '인증사진'),
+    h('div', { class: 'daily-row' },
+      h('div', { class: 'grow' },
+        h('div', { class: 'daily-title' }, '완료할 때 인증사진 묻기'),
+        h('div', { class: 'hint' }, '끄면 할 일 수정 창에서만 올릴 수 있어요')),
+      h('label', { class: 'switch' },
+        h('input', {
+          type: 'checkbox', checked: ask, 'aria-label': '완료할 때 인증사진 묻기',
+          onchange: (e) => { prefSet('askPhoto', e.target.checked ? null : 'off'); render(); },
+        }),
+        h('span', { class: 'switch-ui' }),
+        h('span', { class: 'switch-label' }, ask ? '켜짐' : '꺼짐'))),
+    u ? [
+      h('div', { class: 'usage-line' }, h('span', null, '사진 용량'), h('b', null, `${fmtBytes(u.total)} / ${fmtBytes(quota)}`)),
+      h('div', { class: `bar usage-bar${u.total > quota * 0.8 ? ' warn' : ''}` }, h('div', { class: 'bar-fill', style: { width: `${Math.min(100, (u.total / quota) * 100)}%` } })),
+      h('p', { class: 'hint' }, `모든 사용자가 함께 쓰는 공간이에요. 그중 내 사진 ${fmtBytes(u.mine)}.`),
+    ] : null,
+    h('p', { class: 'hint' }, '사진은 올릴 때 자동으로 줄여서 저장하고, 할 일을 지우면 사진도 함께 지워져요.'));
+}
+
 function settingsSheet() {
   const me = state.me;
   const cats = state.cats.get(me.id) || [];
@@ -1332,6 +1495,8 @@ function settingsSheet() {
         h('button', { class: 'btn btn-sm', type: 'button', onclick: () => openSheet('partner') }, icon('userPlus'), '상대 추가')),
 
       h('div', { class: 'section' }, h('h3', null, '알림'), pushSection()),
+
+      photoSection(),
 
       h('div', { class: 'section' }, h('h3', null, '카테고리와 공개 범위'),
         h('p', { class: 'hint' }, '비공개 카테고리의 할 일은 상대에게 보이지 않아요. 색상 원을 누르면 색이 바뀌어요.'),
@@ -1387,7 +1552,7 @@ function settingsSheet() {
         h('button', {
           class: 'btn btn-block btn-danger-ghost', type: 'button',
           onclick: () => {
-            if (confirm('계정을 삭제할까요? 할 일, 카테고리, 연결이 모두 지워지고 되돌릴 수 없어요.')) act(() => store.deleteAccount());
+            if (confirm('계정을 삭제할까요? 할 일, 카테고리, 사진, 연결이 모두 지워지고 되돌릴 수 없어요.')) act(() => store.deleteAccount());
           },
         }, '계정 삭제')),
     ],

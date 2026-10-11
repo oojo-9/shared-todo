@@ -48,6 +48,7 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
   chart: '<path d="M4 20h16"/><path d="M7 16v-5M12 16V6M17 16v-8" stroke-width="3"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  camera: '<path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
 };
 
 export function icon(name) {
@@ -147,6 +148,36 @@ export function b64urlToBytes(s) {
   const b64 = (s + '='.repeat((4 - (s.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
+
+// ---- 사진 ----
+// 올리기 전에 긴 쪽을 max 픽셀로 줄이고 JPEG로 다시 저장한다 (아이폰 원본 3~5MB → 약 200~300KB)
+export async function shrinkImage(file, max = 1280, quality = 0.8) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error('사진을 읽지 못했어요'));
+      i.src = url;
+    });
+    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const width = Math.max(1, Math.round(img.naturalWidth * scale));
+    const height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; // 투명한 그림은 흰 바탕으로
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', quality));
+    if (!blob) throw new Error('사진을 줄이지 못했어요');
+    return { blob, width, height };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+export const fmtBytes = (n) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)}GB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)}MB` : `${Math.round(n / 1024)}KB`);
 
 export const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

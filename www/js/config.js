@@ -10,6 +10,8 @@ export const config = {
   oauthProviders: [],
   // 설정 > 문의하기 에서 열릴 메일 주소
   supportEmail: '',
+  // 사진 저장 한도 (Supabase 무료 요금제 Storage 1GB). 요금제를 바꾸면 여기도 바꾼다.
+  photoQuotaBytes: 1024 ** 3,
   appName: '공유 투두',
   version: '0.1.0',
 };

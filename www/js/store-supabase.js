@@ -1,10 +1,15 @@
 // 서버 모드 저장소: Supabase Auth + Postgres + Realtime.
 // 보기 권한은 DB의 Row Level Security(supabase/schema.sql)가 막고, 여기서는 조회·수정만 한다.
-import { COLORS, validNickname, validText, normTimes } from './util.js';
+import { COLORS, validNickname, validText, normTimes, uid } from './util.js';
 
 const SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
+const BUCKET = 'photos';
+const URL_TTL = 3600; // 사진 주소 유효 시간(초)
+
 const ERRORS = [
+  [/Bucket not found|photo_usage|photo_trash|public\.photos|'photos'/i, '사진 기능을 아직 준비 중이에요'],
+  [/exceeded the maximum allowed size/i, '사진이 너무 커요'],
   [/users_nickname_key/, '이미 사용 중인 아이디예요'],
   [/Invalid login credentials/i, '이메일 또는 비밀번호가 맞지 않아요'],
   [/User already registered/i, '이미 가입된 이메일이에요'],
@@ -33,6 +38,8 @@ export async function createSupabaseStore(cfg) {
   let session = ok(await sb.auth.getSession()).session;
   let me = null;
   let channel = null;
+  let photoChannel = null;
+  const signed = new Map(); // 사진 경로 -> { url, exp }. 주소가 바뀌면 사진을 다시 내려받으므로 유효한 동안 재사용한다
 
   sb.auth.onAuthStateChange((event, s) => {
     const changed = (s?.user?.id ?? null) !== (session?.user?.id ?? null);
@@ -56,6 +63,35 @@ export async function createSupabaseStore(cfg) {
       channel.on('postgres_changes', { event: '*', schema: 'public', table }, emit);
     }
     channel.subscribe();
+    // 사진은 채널을 따로 둔다 (009_photos.sql 실행 전이라 표가 없어도 위 채널은 멀쩡하게)
+    if (photoChannel) sb.removeChannel(photoChannel);
+    photoChannel = sb.channel('shtodo-photos').on('postgres_changes', { event: '*', schema: 'public', table: 'photos' }, emit);
+    photoChannel.subscribe();
+  }
+
+  // 지워진 사진 줄의 파일을 Storage에서 지운다. 할 일·카테고리를 지우면 사진 줄은 DB가 함께 지우고
+  // 파일 경로만 photo_trash에 남기므로, 주인의 앱이 여기서 마저 지운다.
+  async function sweepPhotos() {
+    try {
+      for (let i = 0; i < 20; i++) {
+        const paths = ok(await sb.from('photo_trash').select('path').limit(100)).map((r) => r.path);
+        if (!paths.length) return;
+        ok(await sb.storage.from(BUCKET).remove(paths));
+        ok(await sb.from('photo_trash').delete().in('path', paths));
+        paths.forEach((p) => signed.delete(p));
+      }
+    } catch (e) { console.warn(e); }
+  }
+  if (session) sweepPhotos(); // 다른 기기에서 지웠거나 지난번에 못 지운 것
+
+  async function signedUrls(paths) {
+    const now = Date.now();
+    const need = paths.filter((p) => !(signed.get(p)?.exp > now));
+    if (need.length) {
+      const res = ok(await sb.storage.from(BUCKET).createSignedUrls(need, URL_TTL));
+      for (const r of res) if (r.signedUrl) signed.set(r.path, { url: r.signedUrl, exp: now + (URL_TTL - 600) * 1000 });
+    }
+    return paths.map((p) => signed.get(p)?.url || null);
   }
 
   function uidOrThrow() {
@@ -95,6 +131,9 @@ export async function createSupabaseStore(cfg) {
     },
     // 앱 안 계정 삭제 (애플 심사 요건)
     async deleteAccount() {
+      // 사진 파일은 계정과 함께 지워지지 않으므로 먼저 지운다
+      await sb.from('photos').delete().eq('user_id', uidOrThrow());
+      await sweepPhotos();
       ok(await sb.rpc('delete_account'));
       await sb.auth.signOut();
     },
@@ -129,6 +168,7 @@ export async function createSupabaseStore(cfg) {
     },
     async deleteCategory(id) {
       ok(await sb.from('categories').delete().eq('id', id)); // 할 일은 FK cascade로 함께 삭제
+      await sweepPhotos();
     },
 
     async listTodos(userId, from, to) {
@@ -155,6 +195,7 @@ export async function createSupabaseStore(cfg) {
     },
     async deleteSeries(seriesId, fromDate) {
       ok(await sb.from('todos').delete().eq('series_id', seriesId).gte('date', fromDate));
+      await sweepPhotos();
     },
     async updateTodo(id, patch) {
       const p = { ...patch, ...normTimes(patch) };
@@ -164,6 +205,40 @@ export async function createSupabaseStore(cfg) {
     },
     async deleteTodo(id) {
       ok(await sb.from('todos').delete().eq('id', id));
+      await sweepPhotos();
+    },
+
+    // ---- 찰칵 (인증사진) ----
+    // 내가 볼 수 있는 사진을 최신순으로 (누구 것까지 보이는지는 RLS가 정한다)
+    async listPhotos(limit) {
+      const rows = ok(await sb.from('photos').select('id, user_id, todo_id, path, width, height, created_at, todos(title)')
+        .order('created_at', { ascending: false }).limit(limit));
+      const urls = await signedUrls(rows.map((r) => r.path));
+      return rows.map(({ todos, path, ...r }, i) => ({ ...r, title: todos?.title || '', url: urls[i] }));
+    },
+    // 이 기간의 할 일 중 사진이 붙은 것의 id
+    async listPhotoMarks(userIds, from, to) {
+      const rows = ok(await sb.from('photos').select('todo_id, todos!inner(date)').in('user_id', userIds)
+        .gte('todos.date', from).lte('todos.date', to));
+      return rows.map((r) => r.todo_id);
+    },
+    async addPhoto(todoId, { blob, width, height }) {
+      const userId = uidOrThrow();
+      const usage = await this.photoUsage();
+      if (usage.total + blob.size > cfg.photoQuotaBytes * 0.95) throw new Error('사진 저장 공간이 거의 찼어요. 찰칵에서 예전 사진을 지워 주세요');
+      const path = `${userId}/${uid()}.jpg`;
+      ok(await sb.storage.from(BUCKET).upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' }));
+      const res = await sb.from('photos').insert({ user_id: userId, todo_id: todoId, path, size: blob.size, width, height });
+      if (res.error) await sb.storage.from(BUCKET).remove([path]); // 줄을 못 적었으면 파일도 남기지 않는다
+      ok(res);
+    },
+    async deletePhoto(id) {
+      ok(await sb.from('photos').delete().eq('id', id));
+      await sweepPhotos();
+    },
+    // { total: 전체 사용자 합계, mine: 내 사진 } (바이트)
+    async photoUsage() {
+      return ok(await sb.rpc('photo_usage'));
     },
 
     async listConnections() {
