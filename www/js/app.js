@@ -969,8 +969,10 @@ function sheetView() {
   const s = state.sheet;
   const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet, repeat: repeatSheet, add: addSheet, proof: proofSheet };
   const { title, body } = builders[s.type](s);
+  // 뜨는 효과는 처음 열릴 때만. 열려 있는 팝업을 다시 그릴 때마다 효과가 처음부터 되풀이되면
+  // (완료 체크 → 저장 → 실시간 갱신이 연달아 올 때) 아이폰에서 팝업이 반투명한 채로 보인다.
   return h('div', {
-    class: 'sheet-overlay',
+    class: `sheet-overlay${s.type === lastSheetType ? ' still' : ''}`,
     onclick: (e) => { if (e.target === e.currentTarget) closeSheet(); },
   },
   h('div', { class: `sheet sheet-${s.type}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
