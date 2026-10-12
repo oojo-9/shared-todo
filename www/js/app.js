@@ -20,16 +20,27 @@ const state = {
   pinned: readPinned(), // 친구가 3명보다 많을 때 공유 보기에 띄울 친구 id
   conns: { partners: [], incoming: [], outgoing: [] },
   cats: new Map(), // userId -> categories
-  todos: new Map(), // userId -> 이번 주 todos
+  todos: new Map(), // userId -> 날짜 줄에 깔린 기간의 todos
   sheet: null,
   drafts: { email: prefGet('email') || '' }, // 입력 중인 값 (실시간 갱신으로 화면을 다시 그려도 유지)
   authMode: 'signin',
   pushOn: false, // 이 기기에서 푸시 알림을 받는 중인지
   nudgeLeft: new Map(), // '상대id|날짜' -> 오늘 콕 찌르기 남은 횟수
   snap: { list: null, limit: 20, more: false, error: null }, // 찰칵: 불러온 사진, 몇 장까지 불러올지
-  photoTodos: new Set(), // 이번 주 할 일 중 사진이 붙은 것의 id
+  photoTodos: new Set(), // 불러온 기간의 할 일 중 사진이 붙은 것의 id
   usage: null, // 설정의 사진 용량 { total, mine }
 };
+
+// 날짜 줄: 한 번에 7일이 보이고 좌우로 밀어 넘긴다. 보이는 7일 앞뒤로 STRIP_PAD일씩 더 깔아 두고,
+// 끝에 가까워지면 그 자리를 가운데로 다시 깐다. 날짜는 하루 단위 번호로 다룬다.
+const STRIP_PAD = 21;
+const dayNum = (s) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d) / 864e5; };
+const numDay = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
+const strip = { from: 0, to: 0, pos: dayNum(startOfWeek(today())), goal: null }; // pos: 맨 왼쪽에 보이는 날(밀리는 중엔 소수), goal: 부드럽게 옮겨 가는 중인 목적지
+function fitStrip(left) { strip.from = left - STRIP_PAD; strip.to = left + 6 + STRIP_PAD; }
+fitStrip(strip.pos);
+let loaded = null; // 할 일을 불러온 기간 { from, to }
+const CALM = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function readPinned() {
   try { const v = JSON.parse(prefGet('partners') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
@@ -87,8 +98,8 @@ async function reload() {
       const conns = await store.listConnections();
       if (my !== seq) return;
       state.conns = conns;
-      const from = startOfWeek(state.selected);
-      const to = addDays(from, 6);
+      const from = numDay(strip.from);
+      const to = numDay(strip.to);
       const ids = [me.id, ...visiblePartners().map((p) => p.id)];
       const [res, marks] = await Promise.all([
         Promise.all(ids.map((id) => Promise.all([store.listCategories(id), store.listTodos(id, from, to)]))),
@@ -96,6 +107,7 @@ async function reload() {
       ]);
       if (my !== seq) return;
       state.photoTodos = new Set(marks);
+      loaded = { from, to };
       state.cats.clear();
       state.todos.clear();
       ids.forEach((id, i) => { state.cats.set(id, res[i][0]); state.todos.set(id, res[i][1]); });
@@ -231,6 +243,7 @@ function render() {
     root.querySelectorAll(sel).forEach((el, j) => { if (scrolls[i][j]) el.scrollTop = scrolls[i][j]; });
   });
   lastSheetType = sheetType;
+  syncStrip();
 
   if (key) {
     const el = root.querySelector(`[data-key="${CSS.escape(key)}"]`);
@@ -248,7 +261,7 @@ function view() {
   return [
     topBar(),
     TOP_TITLE[state.view] ? null : weekStrip(),
-    h('main', { class: 'main', onscroll: state.view === 'snap' ? onSnapScroll : null },
+    h('main', { class: `main${DAY_VIEWS.includes(state.view) ? ' swipe' : ''}`, onscroll: state.view === 'snap' ? onSnapScroll : null },
       TOP_TITLE[state.view] ? null : weekHolidays(),
       requestBanner(),
       { share: shareView, stats: statsView, snap: snapView, mine: mineView }[state.view]()),
@@ -354,46 +367,83 @@ function topBar() {
 }
 
 function weekStrip() {
-  const ws = startOfWeek(state.selected);
   const t = today();
-  const hasTodo = (id, d) => (state.todos.get(id) || []).some((x) => x.date === d);
-  const days = h('div', { class: 'week-days' }, Array.from({ length: 7 }, (_, i) => {
-    const d = addDays(ws, i);
+  const from = strip.from;
+  const has = new Map([state.me.id, ...visiblePartners().map((p) => p.id)]
+    .map((id) => [id, new Set((state.todos.get(id) || []).map((x) => x.date))]));
+  const hasTodo = (id, d) => !!has.get(id)?.has(d);
+  const days = h('div', {
+    class: 'week-days',
+    onpointerdown: () => { strip.goal = null; },
+    onscroll: (e) => {
+      const el = e.currentTarget;
+      if (!el.isConnected) return;
+      strip.pos = from + el.scrollLeft / stripStep(el);
+      clearTimeout(stripTimer);
+      stripTimer = setTimeout(stripSettled, 150);
+    },
+  }, Array.from({ length: strip.to - from + 1 }, (_, i) => {
+    const d = numDay(from + i);
     const dt = parseYmd(d);
     return h('button', {
       type: 'button',
       class: `day${dayTone(d)}${d === t ? ' is-today' : ''}${d === state.selected ? ' is-selected' : ''}`,
       'aria-pressed': String(d === state.selected),
-      'aria-label': `${dt.getMonth() + 1}월 ${dt.getDate()}일 ${WEEK[i]}요일${holidayOf(d) ? ` ${holidayOf(d)}` : ''}${d === t ? ' (오늘)' : ''}`,
+      'aria-label': `${dt.getMonth() + 1}월 ${dt.getDate()}일 ${weekdayOf(d)}요일${holidayOf(d) ? ` ${holidayOf(d)}` : ''}${d === t ? ' (오늘)' : ''}`,
       title: holidayOf(d) || null,
-      onclick: () => selectDate(d),
+      onclick: () => goTo(d),
     },
     h('span', { class: 'day-num' }, `${dt.getMonth() + 1}/${dt.getDate()}`),
-    h('span', { class: 'day-wd' }, WEEK[i]),
+    h('span', { class: 'day-wd' }, weekdayOf(d)),
     dayDots(d, hasTodo));
   }));
-  attachSwipe(days, (dir) => shiftWeek(dir));
   return h('nav', { class: 'week', 'aria-label': '날짜 선택' },
-    h('button', { class: 'week-arrow', type: 'button', 'aria-label': '지난주', onclick: () => shiftWeek(-1) }, icon('left')),
+    h('button', { class: 'week-arrow', type: 'button', 'aria-label': '이전 7일', onclick: () => slideStrip(-7) }, icon('left')),
     days,
-    h('button', { class: 'week-arrow', type: 'button', 'aria-label': '다음주', onclick: () => shiftWeek(1) }, icon('right')));
+    h('button', { class: 'week-arrow', type: 'button', 'aria-label': '다음 7일', onclick: () => slideStrip(7) }, icon('right')));
 }
 
-// 탭 줄을 좌우로 밀면 지난주·다음주로 이동
-function attachSwipe(el, onSwipe) {
-  let x0 = null;
-  let y0 = 0;
-  let swiped = false;
-  el.addEventListener('pointerdown', (e) => { x0 = e.clientX; y0 = e.clientY; swiped = false; });
-  el.addEventListener('pointerup', (e) => {
-    if (x0 == null) return;
-    const dx = e.clientX - x0;
-    const dy = e.clientY - y0;
-    x0 = null;
-    if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) { swiped = true; onSwipe(dx < 0 ? 1 : -1); }
-  });
-  el.addEventListener('pointercancel', () => { x0 = null; });
-  el.addEventListener('click', (e) => { if (swiped) { e.stopPropagation(); e.preventDefault(); swiped = false; } }, true);
+// 날짜 한 칸의 너비 + 간격(4px). 7칸이 딱 한 화면
+const stripStep = (el) => (el.clientWidth + 4) / 7;
+let stripTimer;
+
+// 화면을 다시 그리면 날짜 줄도 새로 만들어지므로, 보던 자리로 되돌리고 옮겨 가던 중이면 이어서 옮긴다
+function syncStrip() {
+  const el = root.querySelector('.week-days');
+  if (!el) return;
+  const step = stripStep(el);
+  el.scrollLeft = (strip.pos - strip.from) * step;
+  if (strip.goal != null && strip.goal !== strip.pos) el.scrollTo({ left: (strip.goal - strip.from) * step, behavior: CALM ? 'auto' : 'smooth' });
+}
+window.addEventListener('resize', syncStrip);
+
+// 밀기가 멈추면: 깔아 둔 날짜의 끝에 가까우면 지금 자리를 가운데로 다시 깔고 그 기간을 불러온다
+function stripSettled() {
+  strip.goal = null;
+  const left = Math.round(strip.pos);
+  if (left - strip.from < 7 || strip.to - (left + 6) < 7) { fitStrip(left); reload(); }
+}
+
+// 화살표: 고른 날은 그대로 두고 날짜 줄만 7일씩 민다
+function slideStrip(n) {
+  const base = strip.goal ?? Math.round(strip.pos);
+  strip.goal = Math.max(strip.from, Math.min(strip.to - 6, base + n));
+  syncStrip();
+}
+
+// 고른 날이 날짜 줄에 보이게 한다. 불러올 기간이 바뀌었으면 true
+function revealSelected() {
+  const s = dayNum(state.selected);
+  const left = strip.goal ?? Math.round(strip.pos);
+  if (s < left || s > left + 6) {
+    const near = s >= left - 7 && s <= left + 13;
+    strip.goal = near ? (s < left ? s : s - 6) : dayNum(startOfWeek(state.selected)); // 가까우면 필요한 만큼만 밀고, 멀면 그 주로 바로 간다
+    if (!near) strip.pos = strip.goal;
+  }
+  const to = strip.goal ?? left;
+  if (to - strip.from >= 7 && strip.to - (to + 6) >= 7) return false;
+  fitStrip(to);
+  return true;
 }
 
 // 보고 있는 주에 공휴일이 있으면 이름을 한 줄로 알려 준다
@@ -406,16 +456,69 @@ function weekHolidays() {
       `${md(d)}(${weekdayOf(d)}) ${holidayOf(d)}`)));
 }
 
-function selectDate(d) {
-  const sameWeek = startOfWeek(d) === startOfWeek(state.selected);
+// 날짜 바꾸기: 이미 불러온 날이면 바로 보여 주고, 아니면 불러온 뒤에 보여 준다
+function goTo(d) {
   state.selected = d;
-  if (sameWeek) render(); else reload();
+  const refit = revealSelected();
+  const have = !!loaded && d >= loaded.from && d <= loaded.to;
+  if (have) render();
+  if (refit || !have) reload();
 }
 
-function shiftWeek(dir) {
-  const next = addDays(state.selected, 7 * dir);
-  state.selected = startOfWeek(next) === startOfWeek(today()) ? today() : next;
-  reload();
+// ---------- 본문을 좌우로 밀어 전날·다음날로 ----------
+// 손가락을 따라 본문이 움직이다가, 충분히 밀고 떼면 옆으로 빠져나가고 새 날짜가 반대쪽에서 들어온다.
+// 세로로 움직이면 평소처럼 스크롤된다 (.main.swipe 의 touch-action: pan-y).
+const DAY_VIEWS = ['share', 'mine'];
+const dayPage = () => root.querySelector('.main.swipe > section');
+let drag = null; // { id, x0, y0, el, on }
+let sliding = false;
+let swallowClick = false;
+root.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' || !e.isPrimary || sliding || state.sheet) return;
+  if (!e.target.closest?.('.main.swipe') || e.target.closest('input, select, textarea')) return;
+  drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, el: dayPage(), on: false };
+});
+root.addEventListener('pointermove', (e) => {
+  if (!drag || e.pointerId !== drag.id || !drag.el) return;
+  const dx = e.clientX - drag.x0;
+  if (!drag.on) {
+    if (Math.abs(dx) < 10) return;
+    if (Math.abs(dx) < Math.abs(e.clientY - drag.y0) * 1.2) { drag = null; return; }
+    drag.on = true;
+  }
+  drag.el.style.transform = `translateX(${dx}px)`;
+});
+function endDrag(e, cancelled) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const { el, on, x0 } = drag;
+  drag = null;
+  if (!on) return;
+  const dx = e.clientX - x0;
+  if (!cancelled) { swallowClick = true; setTimeout(() => { swallowClick = false; }, 50); } // 밀다가 뗀 자리의 버튼이 눌리지 않게
+  if (!cancelled && Math.abs(dx) > Math.min(70, el.clientWidth * 0.2)) { slideDay(dx < 0 ? 1 : -1, dx); return; }
+  el.style.transform = '';
+  if (!CALM) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 180, easing: 'ease-out' });
+}
+root.addEventListener('pointerup', (e) => endDrag(e, false));
+root.addEventListener('pointercancel', (e) => endDrag(e, true));
+root.addEventListener('click', (e) => { if (swallowClick) { swallowClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
+
+function slideDay(dir, fromX = 0) {
+  const old = dayPage();
+  const w = old?.clientWidth || 0;
+  const enter = () => {
+    sliding = false;
+    goTo(addDays(state.selected, dir));
+    const el = dayPage();
+    if (!el) return;
+    el.style.transform = '';
+    if (!CALM) el.animate([{ transform: `translateX(${dir * w}px)` }, { transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+  };
+  if (!old || CALM) { enter(); return; }
+  sliding = true;
+  old.style.transform = `translateX(${-dir * w}px)`;
+  const out = old.animate([{ transform: `translateX(${fromX}px)` }, { transform: `translateX(${-dir * w}px)` }], { duration: 130, easing: 'ease-in' });
+  out.onfinish = out.oncancel = enter;
 }
 
 function requestBanner() {
@@ -1594,7 +1697,7 @@ function monthSheet(s) {
     cells.push(h('button', {
       type: 'button', class: `cal-cell${dayTone(d)}${d === t ? ' is-today' : ''}${d === state.selected ? ' is-selected' : ''}`,
       'aria-label': `${m + 1}월 ${day}일${hol ? ` ${hol}` : ''}`,
-      onclick: () => { state.selected = d; state.sheet = null; reload(); },
+      onclick: () => { state.sheet = null; goTo(d); },
     },
     h('span', { class: 'cal-num' }, day),
     hol ? h('span', { class: 'cal-hol', title: hol }, shortHoliday(hol)) : null,
@@ -1607,7 +1710,7 @@ function monthSheet(s) {
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': '이전 달', onclick: () => move(-1) }, icon('left')),
         h('button', {
           class: 'btn btn-sm', type: 'button',
-          onclick: () => { state.selected = t; state.sheet = null; reload(); },
+          onclick: () => { state.sheet = null; goTo(t); },
         }, '오늘'),
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': '다음 달', onclick: () => move(1) }, icon('right'))),
       h('div', { class: 'cal' },

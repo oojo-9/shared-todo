@@ -161,7 +161,13 @@ input:focus, select:focus { outline: none; border-color: var(--me); box-shadow: 
 }
 .week-arrow { flex: none; width: 28px; border: 0; background: none; color: var(--muted); border-radius: 8px; display: grid; place-items: center; }
 .week-arrow:hover { background: var(--surface-2); }
-.week-days { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; touch-action: pan-y; user-select: none; }
+.week-days {
+  flex: 1; min-width: 0; display: flex; gap: 4px; user-select: none;
+  overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory; scrollbar-width: none;
+}
+.week-days::-webkit-scrollbar { display: none; }
+.week-days .day { flex: 0 0 calc((100% - 24px) / 7); scroll-snap-align: start; }
 .day {
   display: flex; flex-direction: column; align-items: center; gap: 1px;
   padding: 7px 0 5px; min-width: 0;
@@ -181,6 +187,8 @@ input:focus, select:focus { outline: none; border-color: var(--me); box-shadow: 
 
 /* ---------- 본문 ---------- */
 .main { flex: 1; padding: 4px 16px calc(var(--nav-h) + env(safe-area-inset-bottom) + 20px); }
+/* 좌우로 밀어 전날·다음날: 가로 움직임은 앱이 받고 세로는 평소처럼 스크롤 */
+.main.swipe { touch-action: pan-y; overflow-x: hidden; }
 .banners { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .banner {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
