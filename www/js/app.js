@@ -1071,7 +1071,7 @@ function openTodo(t) {
 function sheetView() {
   const s = state.sheet;
   const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet, repeat: repeatSheet, add: addSheet, proof: proofSheet };
-  const { title, body, lead } = builders[s.type](s);
+  const { title, body } = builders[s.type](s);
   // 뜨는 효과는 처음 열릴 때만. 열려 있는 팝업을 다시 그릴 때마다 효과가 처음부터 되풀이되면
   // (완료 체크 → 저장 → 실시간 갱신이 연달아 올 때) 아이폰에서 팝업이 반투명한 채로 보인다.
   return h('div', {
@@ -1080,7 +1080,7 @@ function sheetView() {
   },
   h('div', { class: `sheet sheet-${s.type}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
     h('div', { class: 'sheet-head' },
-      h('div', { class: 'sheet-title' }, lead || null, h('h2', null, title)),
+      h('h2', null, title),
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': '닫기', onclick: closeSheet }, icon('x'))),
     h('div', { class: 'sheet-body' }, body)));
 }
@@ -1213,10 +1213,6 @@ function todoSheet(s) {
   };
   return {
     title: '할 일 수정',
-    lead: todo && !series ? h('button', {
-      class: 'rep-btn', type: 'button', 'aria-label': '반복 일정으로 바꾸기', title: '반복 일정으로 바꾸기',
-      onclick: () => openRepeat(null, todo),
-    }, '🔁') : null,
     body: h('form', { class: 'stack', onsubmit: save },
       series ? h('div', { class: 'field' },
         h('span', null, `🔁 반복 일정 · ${series.label || ''}`),
@@ -1227,7 +1223,15 @@ function todoSheet(s) {
             onclick: () => { state.drafts['e-scope'] = v; render(); },
           }, label))),
         scopeAll ? h('p', { class: 'hint' }, '제목·카테고리·시간 수정과 삭제가 이 날 이후의 반복 일정 전체에 적용돼요.') : null) : null,
-      h('label', { class: 'field' }, h('span', null, '제목'), draftInput('e-title', { maxlength: 200, required: true })),
+      h('label', { class: 'field' }, h('span', null, '제목'),
+        todo && !series
+          ? h('div', { class: 'input-with-btn' },
+            draftInput('e-title', { maxlength: 200, required: true }),
+            h('button', {
+              class: 'in-input-btn', type: 'button', 'aria-label': '반복 일정으로 바꾸기', title: '반복 일정으로 바꾸기',
+              onclick: () => openRepeat(null, todo),
+            }, '🔁'))
+          : draftInput('e-title', { maxlength: 200, required: true })),
       h('div', { class: 'field' }, h('span', null, '상태'),
         h('div', { class: 'segmented', role: 'radiogroup' }, STATUS.map((st) => h('button', {
           type: 'button', role: 'radio', 'aria-checked': String(st === status), class: `seg s-${st}${st === status ? ' active' : ''}`,

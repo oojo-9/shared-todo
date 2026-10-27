@@ -299,7 +299,11 @@ input:focus, select:focus { outline: none; border-color: var(--me); box-shadow: 
 @keyframes rise { from { transform: translateY(24px); opacity: .6; } }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 6px 20px; }
 .sheet-head h2 { margin: 0; font-size: 18px; }
-.sheet-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* 입력칸 안 오른쪽 끝에 붙는 작은 버튼 (할 일 수정 → 🔁 반복으로 바꾸기) */
+.input-with-btn { position: relative; }
+.input-with-btn input { width: 100%; padding-right: 48px; }
+.in-input-btn { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); width: 36px; height: 36px; border: 0; border-radius: 8px; background: transparent; font-size: 17px; }
+.in-input-btn:active { background: var(--line); }
 .sheet-body { overflow-y: auto; padding: 6px 20px calc(env(safe-area-inset-bottom) + 22px); display: flex; flex-direction: column; gap: 14px; }
 .section { display: flex; flex-direction: column; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
 .section:first-child { border-top: 0; padding-top: 0; }
