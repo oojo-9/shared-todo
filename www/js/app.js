@@ -1071,7 +1071,7 @@ function openTodo(t) {
 function sheetView() {
   const s = state.sheet;
   const builders = { partner: partnerSheet, pick: pickSheet, todo: todoSheet, settings: settingsSheet, month: monthSheet, newcat: newCategorySheet, repeat: repeatSheet, add: addSheet, proof: proofSheet };
-  const { title, body } = builders[s.type](s);
+  const { title, body, lead } = builders[s.type](s);
   // 뜨는 효과는 처음 열릴 때만. 열려 있는 팝업을 다시 그릴 때마다 효과가 처음부터 되풀이되면
   // (완료 체크 → 저장 → 실시간 갱신이 연달아 올 때) 아이폰에서 팝업이 반투명한 채로 보인다.
   return h('div', {
@@ -1080,7 +1080,7 @@ function sheetView() {
   },
   h('div', { class: `sheet sheet-${s.type}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
     h('div', { class: 'sheet-head' },
-      h('h2', null, title),
+      h('div', { class: 'sheet-title' }, lead || null, h('h2', null, title)),
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': '닫기', onclick: closeSheet }, icon('x'))),
     h('div', { class: 'sheet-body' }, body)));
 }
@@ -1213,6 +1213,10 @@ function todoSheet(s) {
   };
   return {
     title: '할 일 수정',
+    lead: todo && !series ? h('button', {
+      class: 'rep-btn', type: 'button', 'aria-label': '반복 일정으로 바꾸기', title: '반복 일정으로 바꾸기',
+      onclick: () => openRepeat(null, todo),
+    }, '🔁') : null,
     body: h('form', { class: 'stack', onsubmit: save },
       series ? h('div', { class: 'field' },
         h('span', null, `🔁 반복 일정 · ${series.label || ''}`),
@@ -1379,21 +1383,26 @@ function addSheet(s) {
 }
 
 // ---------- 반복 일정 추가 ----------
-function openRepeat(fromKey) {
+// todo를 넘기면 이미 있는 할 일을 반복 일정으로 바꾼다 (수정 창에서 고친 값을 그대로 가져온다)
+function openRepeat(fromKey, todo) {
   const cats = state.cats.get(state.me.id) || [];
   const last = prefGet('lastCat');
-  const d = parseYmd(state.selected);
-  Object.assign(state.drafts, {
-    'r-title': (state.drafts[fromKey] || '').trim(),
-    'r-cat': cats.some((c) => c.id === last) ? last : '',
+  const dr = state.drafts;
+  const start = todo ? dr['e-date'] || todo.date : state.selected;
+  const d = parseYmd(start);
+  Object.assign(dr, {
+    'r-title': todo ? (dr['e-title'] || '').trim() : (dr[fromKey] || '').trim(),
+    'r-cat': todo ? dr['e-cat'] || '' : cats.some((c) => c.id === last) ? last : '',
     'r-freq': 'daily',
     'r-days': [(d.getDay() + 6) % 7],
     'r-mday': String(d.getDate()),
-    'r-start': state.selected,
-    'r-end': addDays(state.selected, 29),
-    'r-start-t': '', 'r-due-t': '', 'r-sa': '', 'r-da': '',
+    'r-start': start,
+    'r-end': addDays(start, 29),
+    ...(todo
+      ? { 'r-start-t': dr['e-start'] || '', 'r-due-t': dr['e-due'] || '', 'r-sa': dr['e-sa'] ?? '', 'r-da': dr['e-da'] ?? '' }
+      : { 'r-start-t': '', 'r-due-t': '', 'r-sa': '', 'r-da': '' }),
   });
-  openSheet('repeat', { fromKey });
+  openSheet('repeat', { fromKey, todoId: todo?.id });
 }
 
 function repeatSheet(s) {
@@ -1443,20 +1452,29 @@ function repeatSheet(s) {
     const seriesId = uid();
     const repeat = repeatLabel(rule);
     const base = Date.now();
+    const category_id = dr['r-cat'] || null;
+    // 기존 할 일을 바꿀 때: 그 날짜가 반복에 들어 있으면 그 할 일(상태·인증사진 그대로)을 묶음에 넣고 나머지 날만 새로 만든다
+    const own = s.todoId ? (state.todos.get(state.me.id) || []).find((x) => x.id === s.todoId) : null;
+    const keep = own && dates.includes(own.date) ? own : null;
+    const rest = keep ? dates.filter((x) => x !== keep.date) : dates;
     if (busy) return;
     state.sheet = null;
     if (s.fromKey) state.drafts[s.fromKey] = '';
     render();
     actOnce(async () => {
-      await store.createTodos(dates.map((date, i) => ({
-        date, title, category_id: dr['r-cat'] || null, sort: base + i, series_id: seriesId, repeat, ...times,
-      })));
+      if (keep) await store.updateTodo(keep.id, { title, category_id, series_id: seriesId, repeat, ...times });
+      if (rest.length) {
+        await store.createTodos(rest.map((date, i) => ({
+          date, title, category_id, sort: base + i, series_id: seriesId, repeat, ...times,
+        })));
+      }
+      if (s.todoId) return `🔁 ${repeat} · 반복 일정으로 바꿨어요 (총 ${dates.length}개)`;
       return `🔁 ${repeat} · ${dates.length}개 일정을 추가했어요`;
     });
   };
 
   return {
-    title: '반복 일정 추가',
+    title: s.todoId ? '반복 일정으로 바꾸기' : '반복 일정 추가',
     body: h('form', { class: 'stack', onsubmit: submit },
       h('label', { class: 'field' }, h('span', null, '할 일'),
         draftInput('r-title', { placeholder: '예: 영단어 30개 외우기', maxlength: 200, required: true, autocomplete: 'off' })),
@@ -1489,7 +1507,8 @@ function repeatSheet(s) {
         h('label', { class: 'field' }, h('span', null, '종료일'), dateInput('r-end'))),
       timeFields('r'),
       preview(plan()),
-      h('button', { class: 'btn btn-primary btn-block', type: 'submit', disabled: !!problem }, '추가')),
+      s.todoId ? h('p', { class: 'hint' }, '이 할 일의 날짜가 반복에 포함되면, 이 할 일(상태·인증사진)은 그대로 두고 나머지 날짜만 새로 만들어요.') : null,
+      h('button', { class: 'btn btn-primary btn-block', type: 'submit', disabled: !!problem }, s.todoId ? '반복으로 바꾸기' : '추가')),
   };
 }
 

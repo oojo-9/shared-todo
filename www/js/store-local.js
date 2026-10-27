@@ -232,6 +232,7 @@ export function createLocalStore() {
         t.category_id = patch.category_id && db.categories.some((c) => c.id === patch.category_id && c.user_id === sessionId)
           ? patch.category_id : null;
       }
+      if ('series_id' in patch) { t.series_id = patch.series_id || null; t.repeat = patch.repeat || null; }
       Object.assign(t, normTimes(patch));
       t.updated_at = now();
       commit();
